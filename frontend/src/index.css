@@ -1,0 +1,40 @@
+.react-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 20px;
+  padding: 1.6rem;
+  display: grid;
+  gap: 0.8rem;
+  color: #e8eefc;
+}
+
+.react-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.react-pill {
+  background: rgba(94, 234, 212, 0.2);
+  color: #5eead4;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.react-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-top: 0.4rem;
+}
+
+.react-metric {
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.react-label {
+  font-size: 0.8rem;
+  color: #9db0d5;
+}

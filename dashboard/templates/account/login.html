@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+
+{% block title %}Sign in{% endblock title %}
+
+{% block content %}
+<div class="auth-shell">
+  <section class="auth-card auth-card-split">
+    <div class="auth-panel">
+      <div class="brand-mark">F</div>
+      <h1>Welcome back</h1>
+      <p>Sign in to coordinate deployments, incidents, and team workflows.</p>
+      <div class="auth-panel-stats">
+        <div>
+          <span class="stat-value">23</span>
+          <span class="stat-label">Active services</span>
+        </div>
+        <div>
+          <span class="stat-value">4.1h</span>
+          <span class="stat-label">Avg response</span>
+        </div>
+      </div>
+      <div class="auth-panel-foot">Trusted by dev teams shipping fast.</div>
+    </div>
+
+    <div class="auth-form-wrap">
+      <div class="auth-header">
+        <div>
+          <h2>Sign in to Fefe</h2>
+          <p>Use your work credentials to continue.</p>
+        </div>
+      </div>
+
+      <form method="post" action="{% url 'account_login' %}" class="auth-form">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}" />
+
+        {% if form.non_field_errors %}
+          <div class="form-error">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <label class="field">
+          <span>Username or email</span>
+          {{ form.login }}
+        </label>
+
+        <label class="field">
+          <span>Password</span>
+          {{ form.password }}
+        </label>
+
+        <div class="auth-actions">
+          <label class="checkbox">
+            {{ form.remember }}
+            <span>Remember me</span>
+          </label>
+          <a class="text-link" href="{% url 'account_reset_password' %}">Forgot password?</a>
+        </div>
+
+        <button class="primary-btn full" type="submit">Sign in</button>
+      </form>
+
+      <div class="auth-footer">
+        <span>Need access?</span>
+        <a class="text-link" href="#">Request invite</a>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock content %}

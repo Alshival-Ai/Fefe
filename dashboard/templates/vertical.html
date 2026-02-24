@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="app-shell">
+  {% include 'partials/topbar.html' %}
+  {% include 'partials/sidenav.html' %}
+  <main class="app-content main-panel">
+    <canvas id="landing-page-matrix" class="landing-page-matrix" aria-hidden="true"></canvas>
+    <div class="landing-page-content">
+      {% block page_content %}{% endblock page_content %}
+      {% include 'partials/footer.html' %}
+    </div>
+  </main>
+</div>
+{% endblock content %}

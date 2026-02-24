@@ -1,2 +1,9 @@
-Vona-Django_v1.0/
-themeforest-ciYOvTXs-vona-django-5-minimal-admin-dashboard-template.zip
+user_data/ 
+.venv
+.env
+website
+db.sqlite3
+dev.sh
+__pycache__/
+*.py[cod]
+*$py.class

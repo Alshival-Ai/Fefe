@@ -1,0 +1,105 @@
+{% extends 'vertical.html' %}
+
+{% block title %}Overview{% endblock title %}
+
+{% block page_content %}
+<section class="hero">
+  <div>
+    <h1>Team readiness at a glance</h1>
+    <p>Track operational health, upcoming work, and the signals that keep your dev org humming.</p>
+    <div class="hero-actions">
+      <button class="primary-btn" type="button">Create runbook</button>
+      <button class="secondary-btn" type="button">Review incident</button>
+    </div>
+  </div>
+  <div class="hero-card">
+    <h3>Reliability index</h3>
+    <div class="metric">
+      <span class="metric-value">98.7%</span>
+      <span class="metric-label">Last 14 days</span>
+    </div>
+    <div class="progress">
+      <span style="width: 82%"></span>
+    </div>
+    <div class="hero-meta">
+      <span>8 teams</span>
+      <span>21 services</span>
+    </div>
+  </div>
+</section>
+
+<section class="grid">
+  <article class="card">
+    <h3>Deployment pace</h3>
+    <p>12 releases staged across 4 environments.</p>
+    <div class="tag-row">
+      <span class="tag">Stable</span>
+      <span class="tag">Priority</span>
+      <span class="tag">This week</span>
+    </div>
+  </article>
+  <article class="card">
+    <h3>Open incidents</h3>
+    <ul class="list">
+      <li>Payments queue lag</li>
+      <li>Search indexing delay</li>
+      <li>Mobile crash spike</li>
+    </ul>
+  </article>
+  <article class="card">
+    <h3>On-call readiness</h3>
+    <p>Coverage is healthy with 94% schedule alignment.</p>
+    <div class="metric-row">
+      <div>
+        <div class="metric-value">4.1h</div>
+        <div class="metric-label">Avg response</div>
+      </div>
+      <div>
+        <div class="metric-value">26</div>
+        <div class="metric-label">Hand-offs</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="card">
+  <div id="react-root"></div>
+</section>
+
+<section class="table-wrap">
+  <div class="table-header">
+    <h3>Critical follow-ups</h3>
+    <button class="ghost-btn" type="button">Export</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Issue</th>
+        <th>Owner</th>
+        <th>Status</th>
+        <th>ETA</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>API latency regression</td>
+        <td>M. Chen</td>
+        <td><span class="status warning">At risk</span></td>
+        <td>3 days</td>
+      </tr>
+      <tr>
+        <td>Data pipeline retry loop</td>
+        <td>A. Smith</td>
+        <td><span class="status success">Resolved</span></td>
+        <td>Done</td>
+      </tr>
+      <tr>
+        <td>Secrets rotation gap</td>
+        <td>L. Patel</td>
+        <td><span class="status info">Monitoring</span></td>
+        <td>6 hours</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+{% endblock page_content %}

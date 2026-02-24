@@ -1,0 +1,338 @@
+{% extends 'vertical.html' %}
+
+{% block title %}Resource Details{% endblock title %}
+
+{% block page_css %}
+{{ block.super }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css">
+{% endblock page_css %}
+
+{% block page_content %}
+<section class="resource-detail">
+  <div class="toast toast-hidden" data-toast>
+    <div class="toast-body">
+      <div class="toast-icon">✓</div>
+      <div>
+        <div class="toast-title">Copied</div>
+        <div class="toast-text">Terminal output copied to clipboard.</div>
+      </div>
+    </div>
+  </div>
+  <div class="detail-header">
+    <div class="detail-title">
+      <span
+        class="status-orb"
+        data-status="{{ resource.last_status|default:'unknown' }}"
+        aria-hidden="true">
+      </span>
+      <div>
+        <h1>{{ resource.name }}</h1>
+        <div class="text-muted">{{ resource.resource_type|title }}</div>
+      </div>
+    </div>
+    <div class="detail-actions">
+      <a class="ghost-btn" href="{% url 'resources' %}">Back to Resources</a>
+      <button class="primary-btn" type="button">Run health check</button>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <article class="detail-card">
+      <h3>Overview</h3>
+      <div class="detail-row">
+        <span class="text-muted">Target</span>
+        <span>{{ resource.target }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="text-muted">Status</span>
+        <span>{{ resource.last_status|default:'unknown'|title }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="text-muted">Last checked</span>
+        <span>{{ last_checked_display }}</span>
+      </div>
+      {% if resource.notes %}
+      <div class="detail-row">
+        <span class="text-muted">Notes</span>
+        <span>{{ resource.notes }}</span>
+      </div>
+      {% endif %}
+    </article>
+
+    {% if resource.resource_type == 'api' %}
+    <article class="detail-card">
+      <h3>API monitoring</h3>
+      <p class="text-muted">Health endpoint checks, response latency, and status code history will appear here.</p>
+      <div class="placeholder-block">Latency chart placeholder</div>
+      <div class="placeholder-block">Error rate placeholder</div>
+    </article>
+    {% elif resource.resource_type == 'vm' %}
+    <article class="detail-card">
+      <h3>Virtual machine</h3>
+      <div class="detail-row">
+        <span class="text-muted">Host</span>
+        <span>{{ resource.address|default:'—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="text-muted">SSH user</span>
+        <span>{{ resource.ssh_username|default:'—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="text-muted">SSH port</span>
+        <span>{{ resource.ssh_port|default:'22' }}</span>
+      </div>
+      <p class="text-muted">CPU, memory, disk usage, and uptime charts will appear here.</p>
+      <div class="placeholder-block">Host metrics placeholder</div>
+    </article>
+    {% if resource.ssh_key_present and resource.ssh_username and resource.address %}
+    <article class="detail-card ssh-terminal-card">
+      <div class="detail-row">
+        <h3 class="detail-card-title">SSH Terminal</h3>
+        <button type="button" class="gradient-btn" data-ssh-toggle>Connect</button>
+      </div>
+      <p class="text-muted">Connect using the stored SSH credentials.</p>
+      <div class="terminal-hint text-muted">Terminal will open below.</div>
+    </article>
+    {% else %}
+    <article class="detail-card">
+      <h3>SSH Terminal</h3>
+      <p class="text-muted">Add SSH credentials to enable the web terminal for this VM.</p>
+      <div class="placeholder-block">Terminal placeholder</div>
+    </article>
+    {% endif %}
+    {% elif resource.resource_type == 'database' %}
+    <article class="detail-card">
+      <h3>Database</h3>
+      <div class="detail-row">
+        <span class="text-muted">DB type</span>
+        <span>{{ resource.db_type|default:'—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="text-muted">Host</span>
+        <span>{{ resource.address|default:'—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="text-muted">Port</span>
+        <span>{{ resource.port|default:'—' }}</span>
+      </div>
+      <p class="text-muted">Connection checks, query latency, and storage metrics will appear here.</p>
+      <div class="placeholder-block">DB health placeholder</div>
+    </article>
+    {% else %}
+    <article class="detail-card">
+      <h3>Resource signals</h3>
+      <p class="text-muted">Custom checks and alerts for this resource type will appear here.</p>
+      <div class="placeholder-block">Custom checks placeholder</div>
+    </article>
+    {% endif %}
+  </div>
+
+  {% if resource.resource_type == 'vm' and resource.ssh_key_present and resource.ssh_username and resource.address %}
+  <section class="terminal-wrap d-none" data-ssh-panel>
+    <div class="terminal-window">
+      <div class="terminal-topbar">
+        <div class="terminal-meta">
+          <div class="terminal-dots">
+            <button type="button" class="terminal-dot terminal-dot--close" data-ssh-close aria-label="Close terminal">×</button>
+            <button type="button" class="terminal-dot terminal-dot--copy" data-copy-terminal aria-label="Copy terminal output">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M9 9h8v10H9V9zm-2 6H6V5h8v2H7v8z"></path>
+              </svg>
+            </button>
+            <span class="terminal-dot terminal-dot--expand" aria-hidden="true"></span>
+          </div>
+          <div class="terminal-title">SSH session</div>
+        </div>
+      </div>
+      <div class="web-terminal-shell" data-ssh-terminal data-terminal-ws="/terminal/ws/" data-resource-id="{{ resource.id }}"></div>
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="detail-grid">
+    <article class="detail-card">
+      <h3>Health history</h3>
+      <p class="text-muted">Recent health checks will appear here once logging is wired into the UI.</p>
+      <div class="placeholder-block">Health history placeholder</div>
+    </article>
+    <article class="detail-card">
+      <h3>Alerts</h3>
+      <p class="text-muted">Alert rules, channels, and escalation policies will appear here.</p>
+      <div class="placeholder-block">Alert settings placeholder</div>
+    </article>
+  </div>
+</section>
+{% endblock page_content %}
+
+{% block page_js %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+<script>
+  (function () {
+    const sshButton = document.querySelector('[data-ssh-toggle]');
+    const sshPanel = document.querySelector('[data-ssh-panel]');
+    const sshClose = document.querySelector('[data-ssh-close]');
+    const copyButton = document.querySelector('[data-copy-terminal]');
+    const toast = document.querySelector('[data-toast]');
+    let toastTimer;
+    let terminal;
+    let fitAddon;
+    let socket;
+    let hasTerminalOutput = false;
+
+    const openTerminal = () => {
+      if (!sshPanel || terminal) return;
+      const container = sshPanel.querySelector('[data-ssh-terminal]');
+      if (!container) return;
+      const wsPath = container.getAttribute('data-terminal-ws');
+      const resourceId = container.getAttribute('data-resource-id');
+      if (!wsPath || !resourceId) return;
+      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${scheme}://${window.location.host}${wsPath}?resource_id=${resourceId}`;
+
+      terminal = new Terminal({
+        cursorBlink: true,
+        fontFamily:
+          '"SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace',
+        fontSize: 14,
+        theme: {
+          background: '#0a0e12',
+          foreground: '#d7e2f2',
+          cursor: '#6be4a8',
+          selection: 'rgba(107, 228, 168, 0.3)',
+        },
+      });
+
+      fitAddon = new FitAddon.FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.open(container);
+      fitAddon.fit();
+
+      socket = new WebSocket(wsUrl);
+      socket.binaryType = 'arraybuffer';
+
+      const sendResize = () => {
+        const dims = fitAddon.proposeDimensions();
+        if (!dims) return;
+        socket.send(
+          JSON.stringify({
+            type: 'resize',
+            cols: dims.cols,
+            rows: dims.rows,
+          })
+        );
+      };
+
+      socket.addEventListener('open', () => {
+        terminal.focus();
+        sendResize();
+      });
+
+      socket.addEventListener('message', (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          terminal.write(new Uint8Array(event.data));
+          hasTerminalOutput = true;
+          return;
+        }
+        terminal.write(event.data);
+        hasTerminalOutput = true;
+      });
+
+      socket.addEventListener('close', () => {
+        if (!hasTerminalOutput) {
+          terminal.write(
+            '\\r\\n[terminal session closed] Verify the SSH username, host, port, and key.\\r\\n'
+          );
+        } else {
+          terminal.write('\\r\\n[terminal session closed]\\r\\n');
+        }
+      });
+
+      terminal.onData((data) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(data);
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        fitAddon.fit();
+        if (socket.readyState === WebSocket.OPEN) {
+          sendResize();
+        }
+      });
+    };
+
+    if (sshButton && sshPanel) {
+      sshButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        const isHidden = sshPanel.classList.contains('d-none');
+        sshPanel.classList.toggle('d-none', !isHidden);
+        if (isHidden) {
+          openTerminal();
+          sshButton.textContent = 'Close';
+          sshPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          sshButton.textContent = 'Connect';
+        }
+      });
+    }
+
+    if (sshClose && sshPanel && sshButton) {
+      sshClose.addEventListener('click', (event) => {
+        event.preventDefault();
+        sshPanel.classList.add('d-none');
+        sshButton.textContent = 'Connect';
+      });
+    }
+
+    const showToast = () => {
+      if (!toast) return;
+      toast.classList.remove('toast-hidden');
+      toast.classList.add('toast-show');
+      if (toastTimer) {
+        window.clearTimeout(toastTimer);
+      }
+      toastTimer = window.setTimeout(() => {
+        toast.classList.remove('toast-show');
+        toast.classList.add('toast-hidden');
+      }, 2200);
+    };
+
+    const copyTerminalOutput = () => {
+      if (!terminal) return;
+      const lines = [];
+      const buffer = terminal.buffer.active;
+      for (let i = 0; i < buffer.length; i += 1) {
+        const line = buffer.getLine(i);
+        if (line) {
+          lines.push(line.translateToString(true));
+        }
+      }
+      const text = lines.join('\n').trim();
+      if (!text) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(showToast).catch(() => {});
+        return;
+      }
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'absolute';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+      showToast();
+    };
+
+    if (copyButton) {
+      copyButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        copyTerminalOutput();
+      });
+    }
+  })();
+</script>
+{% endblock page_js %}

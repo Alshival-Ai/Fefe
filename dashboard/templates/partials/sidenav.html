@@ -1,0 +1,30 @@
+<aside class="sidenav">
+  <div class="sidenav-content">
+    <div class="sidenav-section">
+      <div class="sidenav-title">Core</div>
+      <nav class="sidenav-nav">
+        <a class="nav-item{% if request.path == '/' %} active{% endif %}" href="{% url 'home' %}">Overview</a>
+        <a class="nav-item{% if '/resources/' in request.path %} active{% endif %}" href="{% url 'resources' %}">Resources</a>
+        <a class="nav-item" href="#">Incidents</a>
+        <a class="nav-item" href="#">Runbooks</a>
+        <a class="nav-item" href="#">Deployments</a>
+      </nav>
+    </div>
+    <div class="sidenav-section">
+      <div class="sidenav-title">Teams</div>
+      <nav class="sidenav-nav">
+        {% if request.user.is_superuser %}
+        <a class="nav-item{% if '/team-directory/' in request.path %} active{% endif %}" href="{% url 'team_directory' %}">Team Directory</a>
+        {% endif %}
+        <a class="nav-item" href="#">Ownership</a>
+        <a class="nav-item" href="#">Service Catalog</a>
+        <a class="nav-item" href="#">On-call</a>
+      </nav>
+    </div>
+    <div class="sidenav-card">
+      <div class="sidenav-card-title">Today's focus</div>
+      <p>2 incidents triaged, 5 deploys scheduled, 1 compliance review.</p>
+      <button class="ghost-btn" type="button">Open command center</button>
+    </div>
+  </div>
+</aside>

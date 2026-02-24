@@ -1,0 +1,998 @@
+{% extends 'vertical.html' %}
+
+{% block title %}Resources{% endblock title %}
+
+{% block page_content %}
+<section class="hero">
+  <div>
+    <h1>Resource monitor</h1>
+    <p>Track the health of APIs, virtual machines, and background workers from one place.</p>
+    <div class="hero-actions">
+      <button class="primary-btn" type="button" data-modal-open="resource">Add resource</button>
+      <button class="secondary-btn" type="button">Configure alerts</button>
+    </div>
+  </div>
+  <div class="hero-card">
+    <h3>Service uptime</h3>
+    <div class="metric">
+      <span class="metric-value">99.2%</span>
+      <span class="metric-label">Past 7 days</span>
+    </div>
+    <div class="progress">
+      <span style="width: 72%"></span>
+    </div>
+    <div class="hero-meta">
+      <span>14 endpoints</span>
+      <span>6 regions</span>
+    </div>
+  </div>
+</section>
+
+<section class="grid">
+  <article class="card">
+    <h3>API endpoints</h3>
+    <p>6 healthy, 2 degraded, 1 down.</p>
+    <div class="tag-row">
+      <span class="tag">Latency</span>
+      <span class="tag">Errors</span>
+      <span class="tag">Throughput</span>
+    </div>
+  </article>
+  <article class="card">
+    <h3>Virtual machines</h3>
+    <ul class="list">
+      <li>VM-east-02 (CPU 58%)</li>
+      <li>VM-central-07 (Memory 71%)</li>
+      <li>VM-eu-04 (Disk 64%)</li>
+    </ul>
+  </article>
+  <article class="card">
+    <h3>Background jobs</h3>
+    <p>3 queues within SLA, 1 backlog spike.</p>
+    <div class="metric-row">
+      <div>
+        <div class="metric-value">0.9s</div>
+        <div class="metric-label">Avg latency</div>
+      </div>
+      <div>
+        <div class="metric-value">412</div>
+        <div class="metric-label">Pending jobs</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="table-wrap">
+  <div class="table-header">
+    <h3>Resources</h3>
+    <div class="table-actions">
+      <button class="ghost-btn" type="button" data-modal-open="resource">Add resource</button>
+      <button class="ghost-btn" type="button">Export</button>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Resource</th>
+        <th>Type</th>
+        <th>Target</th>
+        <th>Added</th>
+        <th class="table-actions-col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if resources %}
+        {% for item in resources %}
+        <tr>
+          <td>
+            <span class="resource-cell">
+              <span class="status-slot">
+                <button
+                  class="status-orb"
+                  type="button"
+                  aria-label="Run health check"
+                  title="Run health check"
+                  data-health-check
+                  data-resource-id="{{ item.id }}"
+                  data-status="{{ item.last_status|default:'unknown' }}">
+                </button>
+                <span class="status-loader" aria-hidden="true">
+                  <span class="typing-indicator">
+                    <span class="typing-circle"></span>
+                    <span class="typing-circle"></span>
+                    <span class="typing-circle"></span>
+                    <span class="typing-shadow"></span>
+                    <span class="typing-shadow"></span>
+                    <span class="typing-shadow"></span>
+                  </span>
+                </span>
+              </span>
+              <span>
+                <a class="resource-link" href="{% url 'resource_detail' item.id %}">
+                  {{ item.name }}
+                </a>
+                {% if item.notes %}
+                  <div class="text-muted small">{{ item.notes }}</div>
+                {% endif %}
+              </span>
+            </span>
+          </td>
+          <td>{{ item.resource_type|title }}</td>
+          <td>{{ item.target }}</td>
+          <td>{{ item.created_at }}</td>
+          <td class="row-actions">
+            <button
+              class="icon-btn icon-btn-small"
+              type="button"
+              data-modal-open="edit-resource"
+              data-resource-id="{{ item.id }}"
+              data-resource-name="{{ item.name|escape }}"
+              data-resource-type="{{ item.resource_type }}"
+              data-resource-target="{{ item.target|escape }}"
+              data-resource-address="{{ item.address|escape }}"
+              data-resource-port="{{ item.port|escape }}"
+              data-resource-db-type="{{ item.db_type|escape }}"
+              data-resource-healthcheck-url="{{ item.healthcheck_url|escape }}"
+              data-resource-notes="{{ item.notes|escape }}"
+              data-resource-ssh-key-name="{{ item.ssh_key_name|escape }}"
+              data-resource-ssh-username="{{ item.ssh_username|escape }}"
+              data-resource-ssh-key-present="{% if item.ssh_key_present %}1{% else %}0{% endif %}"
+              data-resource-ssh-credential-id="{{ item.ssh_credential_id|escape }}"
+              data-resource-ssh-credential-scope="{{ item.ssh_credential_scope|escape }}"
+              data-resource-ssh-port="{{ item.ssh_port|escape }}">
+              ✎
+            </button>
+            <form method="post" action="{% url 'delete_resource_item' item.id %}" class="inline-form" onsubmit="return confirm('Delete this resource?');">
+              {% csrf_token %}
+              <button class="icon-btn icon-btn-small danger" type="submit">🗑</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="5" class="text-muted">No resources added yet.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="resource-ops-grid">
+  <article class="table-wrap alerts-wrap">
+    <div class="table-header alerts-header">
+      <h3>Alerts</h3>
+      <span class="alerts-count">{{ resource_alerts|length }}</span>
+    </div>
+    <div class="alerts-list">
+      {% if resource_alerts %}
+        {% for alert in resource_alerts %}
+        <a class="alert-item alert-item-{{ alert.tone }}" href="{% url 'resource_detail' alert.resource_id %}">
+          <span class="alert-dot" aria-hidden="true"></span>
+          <div class="alert-main">
+            <div class="alert-top">
+              <span class="alert-pill">{{ alert.label }}</span>
+              <span class="alert-time">{{ alert.time_label }}</span>
+            </div>
+            <div class="alert-title">{{ alert.title }}</div>
+            <div class="alert-text">{{ alert.text }}</div>
+          </div>
+        </a>
+        {% endfor %}
+      {% else %}
+      <div class="alert-empty">
+        <div class="alert-empty-title">You're all caught up</div>
+        <div class="text-muted small">Health alerts will appear here when checks fail or become unknown.</div>
+      </div>
+      {% endif %}
+    </div>
+  </article>
+
+  <section class="table-wrap">
+    <div class="table-header">
+      <h3>SSH Key Library</h3>
+      <div class="table-actions">
+        <button class="ghost-btn" type="button" data-modal-open="ssh-key">Add SSH key</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Scope</th>
+          <th>Added</th>
+          <th class="table-actions-col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if ssh_credential_choices %}
+          {% for item in ssh_credential_choices %}
+          <tr>
+            <td>{{ item.name }}</td>
+            <td>
+              {% if item.scope == 'team' %}
+                Team{% if item.team_name %} ({{ item.team_name }}){% endif %}
+              {% elif item.scope == 'global_team' %}
+                Global{% if item.team_name %} ({{ item.team_name }}){% endif %}
+              {% else %}
+                Account
+              {% endif %}
+            </td>
+            <td>{{ item.created_at }}</td>
+            <td class="row-actions">
+              {% if item.is_global and request.user.is_superuser %}
+              <form method="post" action="{% url 'delete_global_ssh_credential_item' item.id %}" class="inline-form" onsubmit="return confirm('Delete this SSH key?');">
+                {% csrf_token %}
+                <button class="icon-btn icon-btn-small danger" type="submit">🗑</button>
+              </form>
+              {% elif item.is_global %}
+                <span class="text-muted small">Managed by admin</span>
+              {% else %}
+              <form method="post" action="{% url 'delete_ssh_credential_item' item.id %}" class="inline-form" onsubmit="return confirm('Delete this SSH key?');">
+                {% csrf_token %}
+                <button class="icon-btn icon-btn-small danger" type="submit">🗑</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="4" class="text-muted">No saved SSH keys yet.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+</section>
+
+<div class="modal" data-modal="ssh-key" aria-hidden="true">
+  <div class="modal-overlay" data-modal-close></div>
+  <div class="modal-content" role="dialog" aria-modal="true" aria-label="Add SSH key">
+    <div class="modal-header">
+      <h3>Add SSH key</h3>
+      <button class="icon-btn" type="button" data-modal-close>✕</button>
+    </div>
+    <form method="post" action="{% url 'add_ssh_credential_item' %}" class="modal-form" data-ssh-library-form enctype="multipart/form-data">
+      {% csrf_token %}
+      <label>
+        <span>Key name</span>
+        <input type="text" name="name" placeholder="prod-vm-key" required />
+      </label>
+      <label>
+        <span>Scope</span>
+        <select name="scope">
+          <option value="account">Account</option>
+          <option value="team">Team</option>
+          {% if request.user.is_superuser %}
+          <option value="global">Global</option>
+          {% endif %}
+        </select>
+      </label>
+      <label data-library-team-field class="d-none">
+        <span>Team</span>
+        <select name="team_name">
+          <option value="">Select a team</option>
+          {% for team_name in member_teams %}
+          <option value="{{ team_name }}">{{ team_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Private key</span>
+        <textarea name="private_key_text" rows="4" placeholder="Paste private key"></textarea>
+      </label>
+      <label>
+        <span>Private key file</span>
+        <input type="file" name="private_key_file" />
+      </label>
+      <div class="modal-actions">
+        <button class="ghost-btn" type="button" data-modal-close>Cancel</button>
+        <button class="primary-btn" type="submit">Save SSH key</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" data-modal="resource" aria-hidden="true">
+  <div class="modal-overlay" data-modal-close></div>
+  <div class="modal-content" role="dialog" aria-modal="true" aria-label="Add resource">
+    <div class="modal-header">
+      <h3>Add resource</h3>
+      <button class="icon-btn" type="button" data-modal-close>✕</button>
+    </div>
+    <form method="post" action="{% url 'add_resource_item' %}" class="modal-form" data-add-form enctype="multipart/form-data">
+      {% csrf_token %}
+      <label>
+        <span>Name</span>
+        <input type="text" name="name" placeholder="Payments API" required />
+      </label>
+      <label>
+        <span>Resource type</span>
+        <select name="resource_type" required>
+          <option value="">Select type</option>
+          <option value="api">API Endpoint</option>
+          <option value="vm">Virtual Machine</option>
+          <option value="database">Database</option>
+          <option value="queue">Queue</option>
+          <option value="service">Service</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label data-resource-type-show="api" class="d-none">
+        <span>Health endpoint</span>
+        <input type="url" name="healthcheck_url" placeholder="https://api.company.com/health" />
+      </label>
+      <label data-resource-type-show="vm,database" class="d-none">
+        <span>Host or IP address</span>
+        <input type="text" name="address" placeholder="vm-prod-01 or 10.0.2.15" />
+      </label>
+      <label data-resource-type-show="database" class="d-none">
+        <span>Database type</span>
+        <select name="db_type">
+          <option value="">Select database</option>
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="mariadb">MariaDB</option>
+          <option value="mssql">SQL Server</option>
+          <option value="redis">Redis</option>
+          <option value="mongo">MongoDB</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label data-resource-type-show="database" class="d-none">
+        <span>Port</span>
+        <input type="number" name="port" min="1" max="65535" placeholder="5432" />
+      </label>
+      <label data-resource-type-show="service,queue,other" class="d-none">
+        <span>Target</span>
+        <input type="text" name="target" placeholder="service-name or URL" />
+      </label>
+      <div data-resource-type-show="vm" class="d-none ssh-group">
+        <div class="ssh-group-header">
+          <div>
+            <div class="ssh-group-title">SSH credentials</div>
+            <div class="text-muted small">Optional for VM resources</div>
+          </div>
+          <button class="ghost-btn" type="button" data-ssh-toggle="keys" aria-expanded="false">Add SSH credentials</button>
+        </div>
+        <div class="ssh-group-body d-none" data-ssh-panel="keys">
+          <label>
+            <span>Credential source</span>
+            <select name="ssh_mode">
+              <option value="inline">Upload new key</option>
+              <option value="saved">Use saved key</option>
+            </select>
+          </label>
+          <label>
+            <span>SSH username</span>
+            <input type="text" name="ssh_username" placeholder="ubuntu" />
+          </label>
+          <label>
+            <span>SSH port</span>
+            <input type="number" name="ssh_port" min="1" max="65535" value="22" />
+          </label>
+          <div data-ssh-mode-show="saved" class="d-none">
+            <label>
+              <span>Saved key</span>
+              <select name="ssh_credential_id">
+                <option value="">Select saved key</option>
+                {% for item in ssh_credential_choices %}
+                <option value="{{ item.id_value }}" data-scope="{{ item.scope_level }}">
+                  {% if item.scope == 'team' %}
+                    Team{% if item.team_name %} ({{ item.team_name }}){% endif %}: {{ item.name }}
+                  {% elif item.scope == 'global_team' %}
+                    Global{% if item.team_name %} ({{ item.team_name }}){% endif %}: {{ item.name }}
+                  {% else %}
+                    Account: {{ item.name }}
+                  {% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </label>
+            <div class="text-muted small">Available keys from Account, Team, and Global libraries.</div>
+          </div>
+          <div data-ssh-mode-show="inline">
+            <label>
+              <span>Key level</span>
+              <select name="ssh_scope">
+                <option value="account">Account</option>
+                <option value="team">Team</option>
+                {% if request.user.is_superuser %}
+                <option value="global">Global</option>
+                {% endif %}
+              </select>
+            </label>
+            <label>
+              <span>Team name (optional)</span>
+              <input type="text" name="ssh_team_name" placeholder="Platform Ops" />
+            </label>
+            <label>
+              <span>Key name</span>
+              <input type="text" name="ssh_key_name" placeholder="prod-vm-key" />
+            </label>
+            <label>
+              <span>Private key</span>
+              <textarea name="ssh_key_text" rows="4" placeholder="Paste the private key"></textarea>
+            </label>
+            <label>
+              <span>Private key file</span>
+              <input type="file" name="ssh_key_file" />
+            </label>
+            <div class="text-muted small">Uploaded keys are saved to the selected key level and attached to this resource.</div>
+          </div>
+        </div>
+      </div>
+      <label data-resource-type-show="api,vm,database,queue,service,other" class="d-none">
+        <span>Notes</span>
+        <textarea name="notes" rows="3" placeholder="Optional context"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="ghost-btn" type="button" data-modal-close>Cancel</button>
+        <button class="primary-btn" type="submit">Add resource</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" data-modal="edit-resource" aria-hidden="true">
+  <div class="modal-overlay" data-modal-close></div>
+  <div class="modal-content" role="dialog" aria-modal="true" aria-label="Edit resource">
+    <div class="modal-header">
+      <h3>Edit resource</h3>
+      <button class="icon-btn" type="button" data-modal-close>✕</button>
+    </div>
+    <form method="post" data-edit-form class="modal-form" enctype="multipart/form-data">
+      {% csrf_token %}
+      <label>
+        <span>Name</span>
+        <input type="text" name="name" required />
+      </label>
+      <label>
+        <span>Resource type</span>
+        <select name="resource_type" required>
+          <option value="api">API Endpoint</option>
+          <option value="vm">Virtual Machine</option>
+          <option value="database">Database</option>
+          <option value="queue">Queue</option>
+          <option value="service">Service</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label data-resource-type-show="api" class="d-none">
+        <span>Health endpoint</span>
+        <input type="url" name="healthcheck_url" />
+      </label>
+      <label data-resource-type-show="vm,database" class="d-none">
+        <span>Host or IP address</span>
+        <input type="text" name="address" />
+      </label>
+      <label data-resource-type-show="database" class="d-none">
+        <span>Database type</span>
+        <select name="db_type">
+          <option value="">Select database</option>
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="mariadb">MariaDB</option>
+          <option value="mssql">SQL Server</option>
+          <option value="redis">Redis</option>
+          <option value="mongo">MongoDB</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label data-resource-type-show="database" class="d-none">
+        <span>Port</span>
+        <input type="number" name="port" min="1" max="65535" />
+      </label>
+      <label data-resource-type-show="service,queue,other" class="d-none">
+        <span>Target</span>
+        <input type="text" name="target" />
+      </label>
+      <div data-resource-type-show="vm" class="d-none ssh-group">
+        <div class="ssh-group-header">
+          <div>
+            <div class="ssh-group-title">SSH credentials</div>
+            <div class="text-muted small" data-ssh-key-status></div>
+          </div>
+          <button class="ghost-btn" type="button" data-ssh-toggle="keys" aria-expanded="false">Add SSH credentials</button>
+        </div>
+        <div class="ssh-group-body d-none" data-ssh-panel="keys">
+          <label>
+            <span>Credential source</span>
+            <select name="ssh_mode">
+              <option value="inline">Upload new key</option>
+              <option value="saved">Use saved key</option>
+            </select>
+          </label>
+          <label>
+            <span>SSH username</span>
+            <input type="text" name="ssh_username" />
+          </label>
+          <label>
+            <span>SSH port</span>
+            <input type="number" name="ssh_port" min="1" max="65535" value="22" />
+          </label>
+          <div data-ssh-mode-show="saved" class="d-none">
+            <label>
+              <span>Saved key</span>
+              <select name="ssh_credential_id">
+                <option value="">Select saved key</option>
+                {% for item in ssh_credential_choices %}
+                <option value="{{ item.id_value }}">
+                  {% if item.scope == 'team' %}
+                    Team{% if item.team_name %} ({{ item.team_name }}){% endif %}: {{ item.name }}
+                  {% elif item.scope == 'global_team' %}
+                    Global{% if item.team_name %} ({{ item.team_name }}){% endif %}: {{ item.name }}
+                  {% else %}
+                    Account: {{ item.name }}
+                  {% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </label>
+            <div class="text-muted small">Available keys from Account, Team, and Global libraries.</div>
+          </div>
+          <div data-ssh-mode-show="inline">
+            <label>
+              <span>Key level</span>
+              <select name="ssh_scope">
+                <option value="account">Account</option>
+                <option value="team">Team</option>
+                {% if request.user.is_superuser %}
+                <option value="global">Global</option>
+                {% endif %}
+              </select>
+            </label>
+            <label>
+              <span>Team name (optional)</span>
+              <input type="text" name="ssh_team_name" placeholder="Platform Ops" />
+            </label>
+            <label>
+              <span>Key name</span>
+              <input type="text" name="ssh_key_name" />
+            </label>
+            <label>
+              <span>Private key</span>
+              <textarea name="ssh_key_text" rows="4" placeholder="Paste the private key to replace it"></textarea>
+            </label>
+            <label>
+              <span>Private key file</span>
+              <input type="file" name="ssh_key_file" />
+            </label>
+            <label>
+              <span>Clear stored key</span>
+              <input type="checkbox" name="clear_ssh_key" value="1" />
+            </label>
+            <div class="text-muted small">Leave private key blank to keep the current one. New inline keys are saved to the selected key level.</div>
+          </div>
+        </div>
+      </div>
+      <label data-resource-type-show="api,vm,database,queue,service,other" class="d-none">
+        <span>Notes</span>
+        <textarea name="notes" rows="3"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="ghost-btn" type="button" data-modal-close>Cancel</button>
+        <button class="primary-btn" type="submit">Save changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const openButtons = document.querySelectorAll('[data-modal-open]');
+    const closeButtons = document.querySelectorAll('[data-modal-close]');
+    const editForm = document.querySelector('[data-edit-form]');
+    const addForm = document.querySelector('[data-add-form]');
+    const sshLibraryForm = document.querySelector('[data-ssh-library-form]');
+    const healthButtons = document.querySelectorAll('[data-health-check]');
+    const updateTypeVisibility = (form) => {
+      if (!form) return;
+      const typeSelect = form.querySelector('select[name="resource_type"]');
+      if (!typeSelect) return;
+      const type = typeSelect.value;
+      form.querySelectorAll('[data-resource-type-show]').forEach((section) => {
+        const showFor = (section.getAttribute('data-resource-type-show') || '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+        section.classList.toggle('d-none', showFor.length > 0 && !showFor.includes(type));
+      });
+    };
+    const updateSshKeyStatus = (form, keyName, keyPresent) => {
+      if (!form) return;
+      const status = form.querySelector('[data-ssh-key-status]');
+      if (!status) return;
+      if (keyName) {
+        status.textContent = `Key on file: ${keyName}`;
+      } else if (keyPresent) {
+        status.textContent = 'Key on file';
+      } else {
+        status.textContent = 'No key stored';
+      }
+    };
+    const getSshUsernameError = (input) => {
+      if (!input) return null;
+      const container = input.parentElement;
+      if (!container) return null;
+      let error = container.querySelector('[data-ssh-username-error]');
+      if (!error) {
+        error = document.createElement('div');
+        error.className = 'text-danger small';
+        error.setAttribute('data-ssh-username-error', 'true');
+        input.insertAdjacentElement('afterend', error);
+      }
+      return error;
+    };
+    const setSshUsernameInvalid = (input, message) => {
+      if (!input) return;
+      const error = getSshUsernameError(input);
+      if (error) {
+        error.textContent = message || '';
+      }
+    };
+    const clearSshUsernameInvalid = (input) => {
+      if (!input) return;
+      const error = getSshUsernameError(input);
+      if (error) {
+        error.textContent = '';
+      }
+    };
+    const ensureSshPanelVisible = (form) => {
+      if (!form) return;
+      const panel = form.querySelector('[data-ssh-panel="keys"]');
+      const toggle = form.querySelector('[data-ssh-toggle="keys"]');
+      if (!panel || !toggle) return;
+      if (panel.classList.contains('d-none')) {
+        panel.classList.remove('d-none');
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.textContent = 'Hide SSH credentials';
+      }
+    };
+    const toggleSshPanel = (button) => {
+      const form = button.closest('form');
+      if (!form) return;
+      const panel = form.querySelector('[data-ssh-panel="keys"]');
+      if (!panel) return;
+      const isOpen = !panel.classList.contains('d-none');
+      panel.classList.toggle('d-none', isOpen);
+      button.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+      button.textContent = isOpen ? 'Add SSH credentials' : 'Hide SSH credentials';
+    };
+    const resetSshPanel = (form) => {
+      if (!form) return;
+      const panel = form.querySelector('[data-ssh-panel="keys"]');
+      const toggle = form.querySelector('[data-ssh-toggle="keys"]');
+      if (panel) panel.classList.add('d-none');
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.textContent = 'Add SSH credentials';
+      }
+    };
+    const scopeLevelFromStored = (credentialId, credentialScope) => {
+      if ((credentialId || '').startsWith('global:') || (credentialScope || '').includes('global')) {
+        return 'global';
+      }
+      if ((credentialScope || '') === 'team') {
+        return 'team';
+      }
+      return 'account';
+    };
+    const updateSshModeSections = (form) => {
+      if (!form) return;
+      const modeSelect = form.querySelector('select[name="ssh_mode"]');
+      const credentialSelect = form.querySelector('select[name="ssh_credential_id"]');
+      const mode = modeSelect ? modeSelect.value : 'inline';
+      form.querySelectorAll('[data-ssh-mode-show]').forEach((section) => {
+        const showFor = (section.getAttribute('data-ssh-mode-show') || '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+        section.classList.toggle('d-none', showFor.length > 0 && !showFor.includes(mode));
+      });
+      if (!credentialSelect) {
+        return;
+      }
+      credentialSelect.disabled = credentialSelect.options.length <= 1;
+    };
+    const resetSshFields = (form) => {
+      if (!form) return;
+      const sshModeSelect = form.querySelector('select[name="ssh_mode"]');
+      const sshScopeSelect = form.querySelector('select[name="ssh_scope"]');
+      const sshTeamInput = form.querySelector('input[name="ssh_team_name"]');
+      const sshCredentialSelect = form.querySelector('select[name="ssh_credential_id"]');
+      const sshUsernameInput = form.querySelector('input[name="ssh_username"]');
+      const sshPortInput = form.querySelector('input[name="ssh_port"]');
+      if (sshModeSelect) sshModeSelect.value = 'inline';
+      if (sshScopeSelect) sshScopeSelect.value = 'account';
+      if (sshTeamInput) sshTeamInput.value = '';
+      if (sshCredentialSelect) sshCredentialSelect.value = '';
+      if (sshUsernameInput) sshUsernameInput.value = '';
+      if (sshPortInput) sshPortInput.value = '22';
+      updateSshModeSections(form);
+    };
+    const updateLibraryTeamField = () => {
+      if (!sshLibraryForm) return;
+      const scopeSelect = sshLibraryForm.querySelector('select[name="scope"]');
+      const teamField = sshLibraryForm.querySelector('[data-library-team-field]');
+      const teamSelect = sshLibraryForm.querySelector('select[name="team_name"]');
+      if (!scopeSelect || !teamField || !teamSelect) return;
+      const showTeam = scopeSelect.value === 'team';
+      teamField.classList.toggle('d-none', !showTeam);
+      if (!showTeam) {
+        teamSelect.value = '';
+      }
+    };
+
+    document.querySelectorAll('.modal-form').forEach((form) => {
+      const typeSelect = form.querySelector('select[name="resource_type"]');
+      if (typeSelect) {
+        typeSelect.addEventListener('change', () => {
+          updateTypeVisibility(form);
+        });
+      }
+      updateTypeVisibility(form);
+      const sshToggle = form.querySelector('[data-ssh-toggle="keys"]');
+      if (sshToggle) {
+        sshToggle.addEventListener('click', (event) => {
+          event.preventDefault();
+          toggleSshPanel(sshToggle);
+        });
+      }
+      const sshModeSelect = form.querySelector('select[name="ssh_mode"]');
+      if (sshModeSelect) {
+        sshModeSelect.addEventListener('change', () => updateSshModeSections(form));
+      }
+      updateSshModeSections(form);
+      const sshUsernameInput = form.querySelector('input[name="ssh_username"]');
+      const sshKeyTextInput = form.querySelector('textarea[name="ssh_key_text"]');
+      const sshKeyFileInput = form.querySelector('input[name="ssh_key_file"]');
+      if (sshUsernameInput && sshKeyTextInput) {
+        form.addEventListener('submit', (event) => {
+          const modeSelect = form.querySelector('select[name="ssh_mode"]');
+          const credentialSelect = form.querySelector('select[name="ssh_credential_id"]');
+          const mode = modeSelect ? modeSelect.value : 'inline';
+          const username = sshUsernameInput.value.trim();
+          const hasSavedKey = mode === 'saved' && credentialSelect && !!credentialSelect.value;
+          if (hasSavedKey && !username) {
+            event.preventDefault();
+            ensureSshPanelVisible(form);
+            setSshUsernameInvalid(sshUsernameInput, 'SSH username is required when attaching a key.');
+            sshUsernameInput.focus();
+            return;
+          }
+          const keyText = sshKeyTextInput.value.trim();
+          const hasFile = sshKeyFileInput && sshKeyFileInput.files && sshKeyFileInput.files.length > 0;
+          if (mode !== 'inline') {
+            clearSshUsernameInvalid(sshUsernameInput);
+            return;
+          }
+          if (!keyText && !hasFile) {
+            clearSshUsernameInvalid(sshUsernameInput);
+            return;
+          }
+          if (!username) {
+            event.preventDefault();
+            ensureSshPanelVisible(form);
+            setSshUsernameInvalid(sshUsernameInput, 'SSH username is required when attaching a key.');
+            sshUsernameInput.focus();
+          }
+        });
+        sshUsernameInput.addEventListener('input', () => {
+          if (sshUsernameInput.value.trim()) {
+            clearSshUsernameInvalid(sshUsernameInput);
+          }
+        });
+        sshKeyTextInput.addEventListener('input', () => {
+          if (!sshKeyTextInput.value.trim()) {
+            clearSshUsernameInvalid(sshUsernameInput);
+          }
+        });
+        if (sshKeyFileInput) {
+          sshKeyFileInput.addEventListener('change', () => {
+            if (!sshKeyFileInput.files || sshKeyFileInput.files.length === 0) {
+              clearSshUsernameInvalid(sshUsernameInput);
+            }
+          });
+        }
+      }
+    });
+
+    const openModal = (name) => {
+      const modal = document.querySelector(`[data-modal="${name}"]`);
+      if (!modal) return;
+      modal.classList.add('is-active');
+      modal.setAttribute('aria-hidden', 'false');
+    };
+
+    const closeModal = (modal) => {
+      if (!modal) return;
+      modal.classList.remove('is-active');
+      modal.setAttribute('aria-hidden', 'true');
+    };
+
+    openButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const modalName = button.getAttribute('data-modal-open');
+        if (modalName === 'edit-resource' && editForm) {
+          const resourceId = button.getAttribute('data-resource-id');
+          editForm.action = `/resources/${resourceId}/edit/`;
+          editForm.querySelector('input[name="name"]').value = button.getAttribute('data-resource-name') || '';
+          editForm.querySelector('select[name="resource_type"]').value = button.getAttribute('data-resource-type') || 'api';
+          const targetInput = editForm.querySelector('input[name="target"]');
+          if (targetInput) {
+            targetInput.value = button.getAttribute('data-resource-target') || '';
+          }
+          const addressInput = editForm.querySelector('input[name="address"]');
+          if (addressInput) {
+            addressInput.value = button.getAttribute('data-resource-address') || '';
+          }
+          const portInput = editForm.querySelector('input[name="port"]');
+          if (portInput) {
+            portInput.value = button.getAttribute('data-resource-port') || '';
+          }
+          const dbTypeSelect = editForm.querySelector('select[name="db_type"]');
+          if (dbTypeSelect) {
+            dbTypeSelect.value = button.getAttribute('data-resource-db-type') || '';
+          }
+          const healthInput = editForm.querySelector('input[name="healthcheck_url"]');
+          if (healthInput) {
+            healthInput.value = button.getAttribute('data-resource-healthcheck-url') || '';
+          }
+          const typeValue = editForm.querySelector('select[name="resource_type"]')?.value;
+          const fallbackTarget = button.getAttribute('data-resource-target') || '';
+          if (typeValue === 'api' && healthInput && !healthInput.value && fallbackTarget) {
+            healthInput.value = fallbackTarget;
+          }
+          if (typeValue === 'vm' && addressInput && !addressInput.value && fallbackTarget) {
+            addressInput.value = fallbackTarget;
+          }
+          if (typeValue === 'database' && fallbackTarget) {
+            if (addressInput && !addressInput.value) {
+              if (fallbackTarget.includes(':')) {
+                const parts = fallbackTarget.split(':');
+                const maybePort = parts.pop();
+                addressInput.value = parts.join(':');
+                if (portInput && !portInput.value) {
+                  portInput.value = maybePort || '';
+                }
+              } else {
+                addressInput.value = fallbackTarget;
+              }
+            }
+          }
+          editForm.querySelector('textarea[name="notes"]').value = button.getAttribute('data-resource-notes') || '';
+          const sshKeyName = button.getAttribute('data-resource-ssh-key-name') || '';
+          const sshUsername = button.getAttribute('data-resource-ssh-username') || '';
+          const sshKeyPresent = button.getAttribute('data-resource-ssh-key-present') === '1';
+          const sshCredentialId = button.getAttribute('data-resource-ssh-credential-id') || '';
+          const sshCredentialScope = button.getAttribute('data-resource-ssh-credential-scope') || '';
+          const sshPort = button.getAttribute('data-resource-ssh-port') || '';
+          const sshKeyNameInput = editForm.querySelector('input[name="ssh_key_name"]');
+          const sshUsernameInput = editForm.querySelector('input[name="ssh_username"]');
+          const sshPortInput = editForm.querySelector('input[name="ssh_port"]');
+          const sshModeSelect = editForm.querySelector('select[name="ssh_mode"]');
+          const sshScopeSelect = editForm.querySelector('select[name="ssh_scope"]');
+          const sshTeamInput = editForm.querySelector('input[name="ssh_team_name"]');
+          const sshCredentialSelect = editForm.querySelector('select[name="ssh_credential_id"]');
+          const sshKeyTextInput = editForm.querySelector('textarea[name="ssh_key_text"]');
+          const sshKeyFileInput = editForm.querySelector('input[name="ssh_key_file"]');
+          const clearKeyInput = editForm.querySelector('input[name="clear_ssh_key"]');
+          if (sshKeyNameInput) sshKeyNameInput.value = sshKeyName;
+          if (sshUsernameInput) sshUsernameInput.value = sshUsername;
+          if (sshPortInput) sshPortInput.value = sshPort || '22';
+          if (sshScopeSelect) {
+            sshScopeSelect.value = scopeLevelFromStored(sshCredentialId, sshCredentialScope);
+          }
+          if (sshTeamInput) sshTeamInput.value = '';
+          if (sshModeSelect) sshModeSelect.value = sshCredentialId ? 'saved' : 'inline';
+          if (sshCredentialSelect) sshCredentialSelect.value = sshCredentialId;
+          updateSshModeSections(editForm);
+          if (sshKeyTextInput) sshKeyTextInput.value = '';
+          if (sshKeyFileInput) sshKeyFileInput.value = '';
+          if (clearKeyInput) clearKeyInput.checked = false;
+          resetSshPanel(editForm);
+          updateTypeVisibility(editForm);
+          updateSshKeyStatus(editForm, sshKeyName, sshKeyPresent);
+        }
+        if (modalName === 'resource') {
+          resetSshFields(addForm);
+          resetSshPanel(addForm);
+          updateTypeVisibility(addForm);
+        }
+        if (modalName === 'ssh-key' && sshLibraryForm) {
+          sshLibraryForm.reset();
+          updateLibraryTeamField();
+        }
+        openModal(modalName);
+      });
+    });
+
+    closeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const modal = button.closest('.modal');
+        closeModal(modal);
+      });
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        document.querySelectorAll('.modal.is-active').forEach((modal) => closeModal(modal));
+      }
+    });
+
+    const getCookie = (name) => {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return '';
+    };
+
+    const setStatusPill = (button, status) => {
+      const normalized = status || 'unknown';
+      button.dataset.status = normalized;
+    };
+
+    healthButtons.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const resourceId = button.getAttribute('data-resource-id');
+        if (!resourceId) return;
+        button.disabled = true;
+        button.classList.add('is-loading');
+        const loader = button.parentElement ? button.parentElement.querySelector('.status-loader') : null;
+        if (loader) {
+          loader.classList.add('is-active');
+        }
+        try {
+          const response = await fetch(`/resources/${resourceId}/check/`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: '{}',
+          });
+          if (!response.ok) {
+            throw new Error(`Health check failed (${response.status})`);
+          }
+          const data = await response.json();
+          setStatusPill(button, data.status);
+        } catch (error) {
+          setStatusPill(button, 'unhealthy');
+        } finally {
+          button.disabled = false;
+          button.classList.remove('is-loading');
+          if (loader) {
+            loader.classList.remove('is-active');
+          }
+        }
+      });
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('add') === '1') {
+      resetSshFields(addForm);
+      resetSshPanel(addForm);
+      updateTypeVisibility(addForm);
+      openModal('resource');
+    }
+
+    if (sshLibraryForm) {
+      const scopeSelect = sshLibraryForm.querySelector('select[name="scope"]');
+      const teamSelect = sshLibraryForm.querySelector('select[name="team_name"]');
+      if (scopeSelect) {
+        scopeSelect.addEventListener('change', updateLibraryTeamField);
+      }
+      sshLibraryForm.addEventListener('submit', (event) => {
+        if (!scopeSelect || !teamSelect) return;
+        if (scopeSelect.value === 'team' && !teamSelect.value) {
+          event.preventDefault();
+          teamSelect.focus();
+        }
+      });
+      updateLibraryTeamField();
+    }
+  })();
+</script>
+{% endblock page_content %}
