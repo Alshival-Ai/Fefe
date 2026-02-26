@@ -2994,6 +2994,22 @@ th, td {
   font-size: 0.85rem;
 }
 
+.auth-social-login {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: start;
+}
+
+.auth-social-login__label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.auth-ms-signin-btn {
+  display: inline-block;
+  margin-top: 0;
+}
+
 .auth-footer {
   display: flex;
   justify-content: center;

@@ -184,6 +184,31 @@
               </span>
               <small class="field-help">Use this to signal temporary platform maintenance operations.</small>
             </label>
+            {% if microsoft_connector_configured %}
+            <label class="settings-field settings-field-full">
+              <span>
+                <input type="checkbox" name="microsoft_login_enabled" value="1" {% if microsoft_login_enabled %}checked{% endif %} {% if not admin_setup_ready %}disabled{% endif %} />
+                Enable Microsoft Login
+              </span>
+              <small class="field-help">Displays a Sign in with Microsoft option on the login screen.</small>
+            </label>
+            {% endif %}
+            {% if github_connector_configured %}
+            <label class="settings-field settings-field-full">
+              <span>
+                <input type="checkbox" name="github_login_enabled" value="1" {% if github_login_enabled %}checked{% endif %} {% if not admin_setup_ready %}disabled{% endif %} />
+                Enable GitHub Login
+              </span>
+              <small class="field-help">Displays a Sign in with GitHub option on the login screen.</small>
+            </label>
+            <label class="settings-field settings-field-full">
+              <span>
+                <input type="checkbox" name="ask_github_mcp_enabled" value="1" {% if ask_github_mcp_enabled %}checked{% endif %} {% if not admin_setup_ready %}disabled{% endif %} />
+                Enable GitHub MCP In Ask Alshival
+              </span>
+              <small class="field-help">Adds GitHub MCP tools to Ask Alshival alongside internal tools.</small>
+            </label>
+            {% endif %}
             <label class="settings-field settings-field-full">
               <span>Maintenance message</span>
               <input type="text" name="maintenance_message" value="{{ maintenance_message }}" maxlength="255" placeholder="Scheduled maintenance in progress. Monitoring is temporarily paused." {% if not admin_setup_ready %}disabled{% endif %} />

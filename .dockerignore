@@ -12,3 +12,4 @@ db.sqlite3
 db.sqlite3-*
 user_data
 website-main.zip
+docker/certbot

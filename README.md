@@ -19,7 +19,7 @@ Recommended Python version: `3.13` (the Docker image is pinned to Python 3.13).
 pip install -r requirements.txt
 ```
 
-3. Configure `.env` (edit existing file or create one):
+3. Configure `.env` (edit existing file or create one). For public domains, set your HTTPS URL + hostnames:
 
 ```env
 HOST=127.0.0.1
@@ -28,6 +28,14 @@ APP_BASE_URL=http://127.0.0.1:8000
 ALLOWED_HOSTS=127.0.0.1,localhost
 CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8000
 ALSHIVAL_SSH_KEY_MASTER_KEYS=<your-random-key>
+```
+
+Example (public HTTPS):
+
+```env
+APP_BASE_URL=https://dev.alshival.dev
+ALLOWED_HOSTS=dev.alshival.dev
+CSRF_TRUSTED_ORIGINS=https://dev.alshival.dev
 ```
 
 4. Apply database migrations:
@@ -96,6 +104,7 @@ This starts:
 - `worker`: periodic resource health checker (every 5 minutes), using a pooled model of ~1 worker per 10 active users (capped)
 - `global-key-worker`: rotates global internal API keys
 - `user-key-worker`: rotates per-user internal account API keys (stored in each user's `member.db`)
+- `github-mcp`: uses the official `ghcr.io/github/github-mcp-server` image (avoids local source build issues)
 
 ### HTTP reverse proxy setup (`-http`)
 
@@ -111,6 +120,33 @@ This adds:
 Naming convention:
 - HTTP-only setup files use `-http` suffix.
 - TLS/certbot setup will use `-https` suffix later.
+
+### HTTPS reverse proxy setup (`-https`)
+
+Use the nginx HTTPS overlay to expose the app on host ports `80/443`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose-https.yml up --build
+```
+
+Or use the helper:
+
+```bash
+./tools/prod.sh
+```
+
+Certbot (auto TLS):
+- `./tools/prod.sh` will auto-fetch a cert for `dev.alshival.dev` using `support@alshival.ai` if none exists.
+- Override defaults with environment variables:
+  - `CERTBOT_DOMAIN=your.domain`
+  - `CERTBOT_EMAIL=you@example.com`
+If you change `CERTBOT_DOMAIN`, also update the `ssl_certificate` paths in `docker/nginx-https.conf`.
+
+This adds:
+- `nginx-https`: reverse proxy on `:443` forwarding to `web:8000` with a `:80` HTTP->HTTPS redirect
+
+TLS certs:
+- Mount `fullchain.pem` and `privkey.pem` into `./docker/ssl/` on the host.
 
 ### Fast dev loop (recommended)
 

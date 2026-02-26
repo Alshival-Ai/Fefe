@@ -52,6 +52,71 @@ def get_alshival_default_model() -> str:
     return model or "gpt-4.1-mini"
 
 
+def is_microsoft_connector_configured() -> bool:
+    try:
+        from allauth.socialaccount.models import SocialApp
+    except Exception:
+        return False
+
+    try:
+        microsoft_app = (
+            SocialApp.objects.filter(provider="microsoft")
+            .exclude(client_id__exact="")
+            .exclude(secret__exact="")
+            .order_by("id")
+            .first()
+        )
+    except (OperationalError, ProgrammingError):
+        return False
+    except Exception:
+        return False
+
+    if microsoft_app is None:
+        return False
+    app_settings = dict(getattr(microsoft_app, "settings", {}) or {})
+    return bool(str(app_settings.get("tenant") or "").strip())
+
+
+def is_microsoft_login_enabled() -> bool:
+    setup = get_setup_state()
+    if setup is None:
+        return False
+    if not bool(getattr(setup, "microsoft_login_enabled", False)):
+        return False
+    return is_microsoft_connector_configured()
+
+
+def is_github_connector_configured() -> bool:
+    try:
+        from allauth.socialaccount.models import SocialApp
+    except Exception:
+        return False
+
+    try:
+        github_app = (
+            SocialApp.objects.filter(provider="github")
+            .exclude(client_id__exact="")
+            .exclude(secret__exact="")
+            .order_by("id")
+            .first()
+        )
+    except (OperationalError, ProgrammingError):
+        return False
+    except Exception:
+        return False
+
+    return github_app is not None
+
+
+def is_github_login_enabled() -> bool:
+    setup = get_setup_state()
+    if setup is None:
+        return False
+    if not bool(getattr(setup, "github_login_enabled", False)):
+        return False
+    return is_github_connector_configured()
+
+
 def is_twilio_configured() -> bool:
     setup = get_setup_state()
     twilio_account_sid = str(getattr(setup, "twilio_account_sid", "") or "").strip() if setup else ""
@@ -90,17 +155,8 @@ def is_email_provider_configured() -> bool:
         return False
 
     try:
-        microsoft_app = (
-            SocialApp.objects.filter(provider="microsoft")
-            .exclude(client_id__exact="")
-            .exclude(secret__exact="")
-            .order_by("id")
-            .first()
-        )
-        if microsoft_app is not None:
-            app_settings = dict(getattr(microsoft_app, "settings", {}) or {})
-            if str(app_settings.get("tenant") or "").strip():
-                return True
+        if is_microsoft_connector_configured():
+            return True
 
         google_app = (
             SocialApp.objects.filter(provider="google")

@@ -1,9 +1,13 @@
 {% extends 'base.html' %}
-{% load static %}
+{% load static auth_flags %}
 
 {% block title %}Sign in{% endblock title %}
 
 {% block content %}
+{% microsoft_login_available as show_microsoft_login %}
+{% microsoft_login_url as microsoft_login_path %}
+{% github_login_available as show_github_login %}
+{% github_login_url as github_login_path %}
 <div class="auth-shell">
   <section class="auth-card auth-card-split">
     <div class="auth-panel">
@@ -63,6 +67,23 @@
           <span class="setup-next-btn__label">Sign in</span>
         </button>
       </form>
+
+      {% if show_microsoft_login or show_github_login %}
+      <div class="auth-social-login">
+        <span class="auth-social-login__label">Or continue with</span>
+        {% if show_microsoft_login %}
+        <a class="ms-signin-btn auth-ms-signin-btn" href="{{ microsoft_login_path }}?process=login{% if next %}&next={{ next|urlencode }}{% endif %}">
+          <img src="{% static 'img/branding/connectors/ms-symbollockup_signin_dark_short.svg' %}" alt="Sign in with Microsoft" />
+        </a>
+        {% endif %}
+        {% if show_github_login %}
+        <a class="github-signin-btn" href="{{ github_login_path }}?process=login{% if next %}&next={{ next|urlencode }}{% endif %}">
+          <img src="{% static 'img/branding/connectors/github.svg' %}" alt="" aria-hidden="true" />
+          <span>Sign in with GitHub</span>
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
 
       <div class="auth-footer">
         <span>Need access?</span>

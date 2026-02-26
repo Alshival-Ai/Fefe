@@ -14,6 +14,9 @@ class SystemSetup(models.Model):
     maintenance_mode = models.BooleanField(default=False)
     maintenance_message = models.CharField(max_length=255, blank=True, default="")
     default_model = models.CharField(max_length=120, blank=True, default="gpt-4.1-mini")
+    microsoft_login_enabled = models.BooleanField(default=False)
+    github_login_enabled = models.BooleanField(default=False)
+    ask_github_mcp_enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

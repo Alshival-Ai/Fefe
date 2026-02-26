@@ -138,7 +138,6 @@
               </div>
               <div class="connector-support">
                 <p>Nice, you are close. Add your Entra app values below, then test with your work Microsoft account.</p>
-                <p>When you click Microsoft sign-in, we first save setup and then route you into the live Microsoft login flow.</p>
               </div>
               <label class="field">
                 <span>Microsoft Entra Tenant ID</span>
@@ -152,9 +151,6 @@
                 <span>Microsoft Entra App Client Secret Value</span>
                 <input type="password" name="microsoft_client_secret" value="{{ initial.microsoft_client_secret }}" autocomplete="off" />
               </label>
-              <button class="ms-signin-btn d-none" type="submit" name="setup_action" value="test_microsoft" data-ms-test-btn>
-                <img src="{% static 'img/branding/connectors/ms-symbollockup_signin_dark_short.svg' %}" alt="Sign in with Microsoft" />
-              </button>
             </div>
 
             <div class="connector-config__body d-none" data-connector-form="github">
@@ -179,10 +175,6 @@
                 <span>GitHub OAuth Client Secret</span>
                 <input type="password" name="github_client_secret" value="{{ initial.github_client_secret }}" autocomplete="off" />
               </label>
-              <button class="github-signin-btn d-none" type="submit" name="setup_action" value="test_github" data-gh-test-btn>
-                <img src="{% static 'img/branding/connectors/github.svg' %}" alt="" aria-hidden="true" />
-                <span>Sign in with GitHub</span>
-              </button>
             </div>
 
             <div class="connector-config__body d-none" data-connector-form="twilio">
@@ -252,13 +244,6 @@
     const completeSetupButton = form.querySelector('.setup-complete-btn');
     const connectorButtons = form.querySelectorAll('[data-connector-open]');
     const connectorForms = form.querySelectorAll('[data-connector-form]');
-    const microsoftTenantInput = form.querySelector('input[name="microsoft_tenant_id"]');
-    const microsoftClientIdInput = form.querySelector('input[name="microsoft_client_id"]');
-    const microsoftClientSecretInput = form.querySelector('input[name="microsoft_client_secret"]');
-    const microsoftTestButton = form.querySelector('[data-ms-test-btn]');
-    const githubClientIdInput = form.querySelector('input[name="github_client_id"]');
-    const githubClientSecretInput = form.querySelector('input[name="github_client_secret"]');
-    const githubTestButton = form.querySelector('[data-gh-test-btn]');
     const errorBox = form.querySelector('[data-step1-error]');
     const usernameInput = form.querySelector('[data-admin-username]');
     const passwordInput = form.querySelector('[data-admin-password]');
@@ -307,12 +292,6 @@
         const shouldShow = panel.getAttribute('data-connector-form') === connectorKey;
         panel.classList.toggle('d-none', !shouldShow);
       });
-      if (connectorKey === 'microsoft') {
-        updateMicrosoftTestButton();
-      }
-      if (connectorKey === 'github') {
-        updateGithubTestButton();
-      }
     };
 
     const showConnectorHome = () => {
@@ -321,23 +300,6 @@
       backButton?.classList.remove('d-none');
       completeSetupButton?.classList.remove('d-none');
       connectorForms.forEach((panel) => panel.classList.add('d-none'));
-    };
-
-    const updateMicrosoftTestButton = () => {
-      if (!microsoftTestButton) return;
-      const tenant = (microsoftTenantInput?.value || '').trim();
-      const clientId = (microsoftClientIdInput?.value || '').trim();
-      const clientSecret = (microsoftClientSecretInput?.value || '').trim();
-      const isComplete = Boolean(tenant && clientId && clientSecret);
-      microsoftTestButton.classList.toggle('d-none', !isComplete);
-    };
-
-    const updateGithubTestButton = () => {
-      if (!githubTestButton) return;
-      const clientId = (githubClientIdInput?.value || '').trim();
-      const clientSecret = (githubClientSecretInput?.value || '').trim();
-      const isComplete = Boolean(clientId && clientSecret);
-      githubTestButton.classList.toggle('d-none', !isComplete);
     };
 
     const setError = (message) => {
@@ -404,13 +366,6 @@
         if (!connectorKey) return;
         showConnectorPanel(connectorKey);
       });
-    });
-
-    [microsoftTenantInput, microsoftClientIdInput, microsoftClientSecretInput].forEach((input) => {
-      input?.addEventListener('input', updateMicrosoftTestButton);
-    });
-    [githubClientIdInput, githubClientSecretInput].forEach((input) => {
-      input?.addEventListener('input', updateGithubTestButton);
     });
 
     if (progressButtons.length) {
