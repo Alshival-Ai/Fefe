@@ -38,6 +38,13 @@
   const asanaTaskMapUrlTemplate = dashboard.getAttribute('data-asana-task-map-url-template') || '';
   const asanaBoardSectionsUrlTemplate = dashboard.getAttribute('data-asana-board-sections-url-template') || '';
   const asanaSectionAddTaskUrlTemplate = dashboard.getAttribute('data-asana-section-add-task-url-template') || '';
+  const asanaSubtasksUrlTemplate = dashboard.getAttribute('data-asana-subtasks-url-template') || '';
+  const asanaAttachmentsUrlTemplate = dashboard.getAttribute('data-asana-attachments-url-template') || '';
+  const asanaDependenciesUrlTemplate = dashboard.getAttribute('data-asana-dependencies-url-template') || '';
+  const asanaDependencyAddUrlTemplate = dashboard.getAttribute('data-asana-dependency-add-url-template') || '';
+  const asanaDependencyRemoveUrlTemplate = dashboard.getAttribute('data-asana-dependency-remove-url-template') || '';
+  const asanaAssignUrlTemplate = dashboard.getAttribute('data-asana-assign-url-template') || '';
+  const asanaWorkspaceMembersUrlTemplate = dashboard.getAttribute('data-asana-workspace-members-url-template') || '';
   const agendaItemMapUrl = dashboard.getAttribute('data-agenda-item-map-url') || '';
   const completedWindowDays = Math.max(
     1,
@@ -387,6 +394,48 @@
     const gid = String(sectionGid || '').trim();
     if (!asanaSectionAddTaskUrlTemplate || !gid) return '';
     return asanaSectionAddTaskUrlTemplate.replace('__SECTION_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaSubtasksUrlForTask = (taskGid) => {
+    const gid = String(taskGid || '').trim();
+    if (!asanaSubtasksUrlTemplate || !gid) return '';
+    return asanaSubtasksUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaAttachmentsUrlForTask = (taskGid) => {
+    const gid = String(taskGid || '').trim();
+    if (!asanaAttachmentsUrlTemplate || !gid) return '';
+    return asanaAttachmentsUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaDependenciesUrlForTask = (taskGid) => {
+    const gid = String(taskGid || '').trim();
+    if (!asanaDependenciesUrlTemplate || !gid) return '';
+    return asanaDependenciesUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaDependencyAddUrlForTask = (taskGid) => {
+    const gid = String(taskGid || '').trim();
+    if (!asanaDependencyAddUrlTemplate || !gid) return '';
+    return asanaDependencyAddUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaDependencyRemoveUrlForTask = (taskGid) => {
+    const gid = String(taskGid || '').trim();
+    if (!asanaDependencyRemoveUrlTemplate || !gid) return '';
+    return asanaDependencyRemoveUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaAssignUrlForTask = (taskGid) => {
+    const gid = String(taskGid || '').trim();
+    if (!asanaAssignUrlTemplate || !gid) return '';
+    return asanaAssignUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
+  };
+
+  const asanaWorkspaceMembersUrlForWorkspace = (workspaceGid) => {
+    const gid = String(workspaceGid || '').trim();
+    if (!asanaWorkspaceMembersUrlTemplate || !gid) return '';
+    return asanaWorkspaceMembersUrlTemplate.replace('__WORKSPACE_GID__', encodeURIComponent(gid));
   };
 
   const asanaTaskRowByGid = (taskGid) => {
@@ -1088,6 +1137,532 @@
     });
   };
 
+  let activeTaskDrawer = null;
+
+  const closeTaskDrawer = () => {
+    if (activeTaskDrawer && activeTaskDrawer.parentNode) {
+      activeTaskDrawer.parentNode.removeChild(activeTaskDrawer);
+    }
+    activeTaskDrawer = null;
+    document.removeEventListener('keydown', handleDrawerEscape);
+  };
+
+  const handleDrawerEscape = (event) => {
+    if (event.key === 'Escape') closeTaskDrawer();
+  };
+
+  const openAsanaTaskDrawer = (item) => {
+    closeTaskDrawer();
+
+    const taskGid = asanaTaskGidForItem(item);
+    if (!taskGid) return;
+    const taskRow = asanaTaskRowByGid(taskGid) || {};
+    const taskName = String(taskRow.name || item.title || `Task ${taskGid}`).trim();
+    const taskUrl = String(taskRow.task_url || item.url || '').trim();
+    const workspaceGid = String(taskRow.workspace_gid || '').trim();
+
+    // ── Overlay ──────────────────────────────────────────────────
+    const overlay = document.createElement('div');
+    overlay.className = 'task-drawer';
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) closeTaskDrawer();
+    });
+
+    // ── Panel ─────────────────────────────────────────────────────
+    const panel = document.createElement('div');
+    panel.className = 'task-drawer__panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', taskName);
+    overlay.appendChild(panel);
+
+    // ── Header ────────────────────────────────────────────────────
+    const header = document.createElement('div');
+    header.className = 'task-drawer__header';
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'task-drawer__title';
+    titleSpan.textContent = taskName;
+    header.appendChild(titleSpan);
+
+    if (taskUrl) {
+      const extLink = document.createElement('a');
+      extLink.className = 'task-drawer__ext-link';
+      extLink.href = taskUrl;
+      extLink.target = '_blank';
+      extLink.rel = 'noopener noreferrer';
+      extLink.title = 'Open in Asana';
+      extLink.textContent = '↗';
+      header.appendChild(extLink);
+    }
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'task-drawer__close';
+    closeBtn.setAttribute('aria-label', 'Close task detail');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeTaskDrawer);
+    header.appendChild(closeBtn);
+    panel.appendChild(header);
+
+    // ── Body ──────────────────────────────────────────────────────
+    const body = document.createElement('div');
+    body.className = 'task-drawer__body';
+    panel.appendChild(body);
+
+    // ── Meta grid ─────────────────────────────────────────────────
+    const metaGrid = document.createElement('div');
+    metaGrid.className = 'task-drawer__meta-grid';
+
+    const dueLabel = document.createElement('span');
+    dueLabel.textContent = 'Due:';
+    const dueVal = document.createElement('span');
+    dueVal.textContent = String(taskRow.due_display || taskRow.due_date || '—').trim() || '—';
+    metaGrid.appendChild(dueLabel);
+    metaGrid.appendChild(dueVal);
+
+    const assigneeLabel = document.createElement('span');
+    assigneeLabel.textContent = 'Assignee:';
+    const assigneeCell = document.createElement('span');
+
+    const assigneeBtn = document.createElement('button');
+    assigneeBtn.type = 'button';
+    assigneeBtn.className = 'task-drawer__assignee-btn';
+    assigneeBtn.textContent = String(taskRow.assignee_name || 'Unassigned').trim();
+    let membersCache = null;
+    assigneeBtn.addEventListener('click', async () => {
+      assigneeBtn.disabled = true;
+      try {
+        if (!membersCache) {
+          const membersUrl = asanaWorkspaceMembersUrlForWorkspace(workspaceGid);
+          if (membersUrl) {
+            const payload = await fetchJson(membersUrl);
+            membersCache = Array.isArray(payload.members) ? payload.members : [];
+          } else {
+            membersCache = [];
+          }
+        }
+        const select = document.createElement('select');
+        select.className = 'task-drawer__assignee-select';
+        const unassignedOpt = document.createElement('option');
+        unassignedOpt.value = '';
+        unassignedOpt.textContent = '— Unassigned —';
+        select.appendChild(unassignedOpt);
+        membersCache.forEach((member) => {
+          const opt = document.createElement('option');
+          opt.value = String(member.gid || '').trim();
+          opt.textContent = String(member.name || member.email || member.gid).trim();
+          if (opt.value === String(taskRow.assignee_gid || '').trim()) opt.selected = true;
+          select.appendChild(opt);
+        });
+        select.addEventListener('change', async () => {
+          const selectedGid = select.value;
+          const assignUrl = asanaAssignUrlForTask(taskGid);
+          if (!assignUrl) return;
+          select.disabled = true;
+          try {
+            await postJson(assignUrl, { assignee_gid: selectedGid || null });
+            const selectedMember = membersCache.find((m) => String(m.gid || '').trim() === selectedGid);
+            const newName = selectedMember ? String(selectedMember.name || selectedMember.email || '').trim() : '';
+            taskRow.assignee_gid = selectedGid;
+            taskRow.assignee_name = newName;
+            assigneeBtn.textContent = newName || 'Unassigned';
+            assigneeCell.replaceChild(assigneeBtn, select);
+            if (plannerController && typeof plannerController.refresh === 'function') {
+              plannerController.refresh();
+            }
+          } catch (error) {
+            window.alert(`Unable to update assignee: ${String(error && error.message ? error.message : 'request_failed')}`);
+            select.disabled = false;
+          }
+        });
+        assigneeCell.replaceChild(select, assigneeBtn);
+        select.focus();
+      } catch (error) {
+        window.alert(`Unable to load workspace members: ${String(error && error.message ? error.message : 'request_failed')}`);
+        assigneeBtn.disabled = false;
+      }
+    });
+    assigneeCell.appendChild(assigneeBtn);
+    metaGrid.appendChild(assigneeLabel);
+    metaGrid.appendChild(assigneeCell);
+
+    const boardLabel = document.createElement('span');
+    boardLabel.textContent = 'Board:';
+    const boardVal = document.createElement('span');
+    const boardLink = asanaBoardLinkForTask(taskGid);
+    if (boardLink && boardLink.url) {
+      const boardA = document.createElement('a');
+      boardA.href = boardLink.url;
+      boardA.target = '_blank';
+      boardA.rel = 'noopener noreferrer';
+      boardA.textContent = boardLink.name || boardLink.url;
+      boardVal.appendChild(boardA);
+    } else {
+      boardVal.textContent = boardLink && boardLink.name ? boardLink.name : '—';
+    }
+    metaGrid.appendChild(boardLabel);
+    metaGrid.appendChild(boardVal);
+
+    const sectionLabel = document.createElement('span');
+    sectionLabel.textContent = 'Section:';
+    const sectionVal = document.createElement('span');
+    sectionVal.textContent = String(taskRow.section_name || '—').trim() || '—';
+    metaGrid.appendChild(sectionLabel);
+    metaGrid.appendChild(sectionVal);
+
+    body.appendChild(metaGrid);
+
+    // ── Notes ─────────────────────────────────────────────────────
+    const notesTitle = document.createElement('div');
+    notesTitle.className = 'task-drawer__section-title';
+    notesTitle.textContent = 'Notes';
+    body.appendChild(notesTitle);
+
+    const notesEl = document.createElement('div');
+    notesEl.className = 'task-drawer__notes';
+    const notesText = String(taskRow.notes || '').trim();
+    notesEl.textContent = notesText || 'No description.';
+    if (!notesText) notesEl.classList.add('text-muted');
+    body.appendChild(notesEl);
+
+    // ── Helper: skeleton placeholder ──────────────────────────────
+    const makeSkeleton = (text) => {
+      const el = document.createElement('p');
+      el.className = 'text-muted task-drawer__skeleton';
+      el.textContent = text || 'Loading…';
+      return el;
+    };
+
+    // ── Subtasks ──────────────────────────────────────────────────
+    const subtaskCount = Number(taskRow.subtask_count || 0);
+    const subtasksTitle = document.createElement('div');
+    subtasksTitle.className = 'task-drawer__section-title';
+    subtasksTitle.textContent = `Subtasks (${subtaskCount})`;
+    body.appendChild(subtasksTitle);
+
+    const subtaskList = document.createElement('div');
+    subtaskList.className = 'task-drawer__subtask-list';
+    subtaskList.appendChild(makeSkeleton('Loading subtasks…'));
+    body.appendChild(subtaskList);
+
+    // ── Attachments ───────────────────────────────────────────────
+    const attachTitle = document.createElement('div');
+    attachTitle.className = 'task-drawer__section-title';
+    attachTitle.textContent = 'Attachments';
+    body.appendChild(attachTitle);
+
+    const attachList = document.createElement('div');
+    attachList.className = 'task-drawer__attachment-list';
+    attachList.appendChild(makeSkeleton('Loading attachments…'));
+    body.appendChild(attachList);
+
+    // ── Dependencies ──────────────────────────────────────────────
+    const depsTitle = document.createElement('div');
+    depsTitle.className = 'task-drawer__section-title';
+    depsTitle.textContent = 'Dependencies';
+    body.appendChild(depsTitle);
+
+    const depList = document.createElement('div');
+    depList.className = 'task-drawer__dep-list';
+    depList.appendChild(makeSkeleton('Loading dependencies…'));
+    body.appendChild(depList);
+
+    const depAddRow = document.createElement('div');
+    depAddRow.className = 'task-drawer__dep-add';
+    const depInput = document.createElement('input');
+    depInput.type = 'text';
+    depInput.className = 'task-drawer__dep-input';
+    depInput.placeholder = 'Dependency task GID…';
+    depInput.maxLength = 64;
+    const depAddBtn = document.createElement('button');
+    depAddBtn.type = 'button';
+    depAddBtn.className = 'primary-btn task-drawer__dep-add-btn';
+    depAddBtn.textContent = 'Add';
+    depAddBtn.addEventListener('click', async () => {
+      const depGid = String(depInput.value || '').trim();
+      if (!depGid) return;
+      const addUrl = asanaDependencyAddUrlForTask(taskGid);
+      if (!addUrl) return;
+      depAddBtn.disabled = true;
+      try {
+        await postJson(addUrl, { dependency_gid: depGid });
+        depInput.value = '';
+        const depsUrl = asanaDependenciesUrlForTask(taskGid);
+        if (depsUrl) {
+          const payload = await fetchJson(depsUrl);
+          renderDeps(Array.isArray(payload.dependencies) ? payload.dependencies : []);
+        }
+      } catch (error) {
+        window.alert(`Unable to add dependency: ${String(error && error.message ? error.message : 'request_failed')}`);
+      } finally {
+        depAddBtn.disabled = false;
+      }
+    });
+    depAddRow.appendChild(depInput);
+    depAddRow.appendChild(depAddBtn);
+    body.appendChild(depAddRow);
+
+    // ── Comments ──────────────────────────────────────────────────
+    const commentsTitle = document.createElement('div');
+    commentsTitle.className = 'task-drawer__section-title';
+    commentsTitle.textContent = 'Comments';
+    body.appendChild(commentsTitle);
+
+    const commentList = document.createElement('div');
+    commentList.className = 'task-drawer__comment-list';
+    commentList.appendChild(makeSkeleton('Loading comments…'));
+    body.appendChild(commentList);
+
+    // Quick reacts + comment form
+    const commentForm = document.createElement('div');
+    commentForm.className = 'task-drawer__comment-form';
+
+    const quickReacts = document.createElement('div');
+    quickReacts.className = 'planner-comment-quickreact';
+    const quickReactLabel = document.createElement('span');
+    quickReactLabel.className = 'planner-comment-quickreact__label';
+    quickReactLabel.textContent = 'Quick react:';
+    quickReacts.appendChild(quickReactLabel);
+
+    const commentTextarea = document.createElement('textarea');
+    commentTextarea.className = 'task-drawer__comment-textarea';
+    commentTextarea.rows = 3;
+    commentTextarea.maxLength = 5000;
+    commentTextarea.placeholder = 'Add a comment…';
+
+    [
+      { label: '🎉', text: '🎉' },
+      { label: '👍', text: '👍' },
+      { label: '✅', text: '✅' },
+      { label: 'Awesome!', text: 'Awesome!' },
+      { label: 'Great work!', text: 'Great work!' },
+    ].forEach(({ label, text }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'planner-comment-quickreact__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => { commentTextarea.value = text; });
+      quickReacts.appendChild(btn);
+    });
+
+    const commentPostBtn = document.createElement('button');
+    commentPostBtn.type = 'button';
+    commentPostBtn.className = 'primary-btn task-drawer__comment-post';
+    commentPostBtn.textContent = 'Post';
+
+    commentForm.appendChild(quickReacts);
+    commentForm.appendChild(commentTextarea);
+    commentForm.appendChild(commentPostBtn);
+    body.appendChild(commentForm);
+
+    // ── Render helpers ────────────────────────────────────────────
+    const renderSubtasks = (subtasks) => {
+      subtaskList.innerHTML = '';
+      subtasksTitle.textContent = `Subtasks (${subtasks.length})`;
+      if (!subtasks.length) {
+        subtaskList.appendChild(makeSkeleton('No subtasks.'));
+        return;
+      }
+      subtasks.forEach((sub) => {
+        const subGid = String(sub.gid || '').trim();
+        const subDone = Boolean(sub.completed);
+        const row = document.createElement('div');
+        row.className = `task-drawer__subtask-row${subDone ? ' is-done' : ''}`;
+
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = subDone;
+        chk.setAttribute('aria-label', `Mark ${String(sub.name || subGid)} as complete`);
+        chk.addEventListener('change', async () => {
+          const completeUrl = asanaCompleteUrlForTask(subGid);
+          if (!completeUrl) { chk.checked = subDone; return; }
+          chk.disabled = true;
+          try {
+            await postJson(completeUrl, { completed: chk.checked });
+            if (chk.checked) row.classList.add('is-done'); else row.classList.remove('is-done');
+          } catch (error) {
+            chk.checked = !chk.checked;
+            window.alert(`Unable to update subtask: ${String(error && error.message ? error.message : 'request_failed')}`);
+          } finally {
+            chk.disabled = false;
+          }
+        });
+
+        const subTitle = document.createElement('span');
+        subTitle.className = 'task-drawer__subtask-title';
+        subTitle.textContent = String(sub.name || subGid).trim();
+
+        row.appendChild(chk);
+        row.appendChild(subTitle);
+        subtaskList.appendChild(row);
+      });
+    };
+
+    const renderAttachments = (attachments) => {
+      attachList.innerHTML = '';
+      if (!attachments.length) {
+        attachList.appendChild(makeSkeleton('No attachments.'));
+        return;
+      }
+      attachments.forEach((att) => {
+        const row = document.createElement('div');
+        row.className = 'task-drawer__attachment-row';
+        const link = document.createElement('a');
+        link.href = String(att.download_url || att.view_url || att.url || '#');
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = String(att.name || att.filename || 'Attachment');
+        row.appendChild(link);
+        attachList.appendChild(row);
+      });
+    };
+
+    const renderDeps = (deps) => {
+      depList.innerHTML = '';
+      if (!deps.length) {
+        depList.appendChild(makeSkeleton('No dependencies.'));
+        return;
+      }
+      deps.forEach((dep) => {
+        const depGid = String(dep.gid || '').trim();
+        const row = document.createElement('div');
+        row.className = 'task-drawer__dep-row';
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = String(dep.name || depGid).trim();
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'ghost-btn task-drawer__dep-remove';
+        removeBtn.textContent = '✕';
+        removeBtn.setAttribute('aria-label', `Remove dependency ${String(dep.name || depGid)}`);
+        removeBtn.addEventListener('click', async () => {
+          const removeUrl = asanaDependencyRemoveUrlForTask(taskGid);
+          if (!removeUrl) return;
+          removeBtn.disabled = true;
+          try {
+            await postJson(removeUrl, { dependency_gid: depGid });
+            row.parentNode && row.parentNode.removeChild(row);
+          } catch (error) {
+            window.alert(`Unable to remove dependency: ${String(error && error.message ? error.message : 'request_failed')}`);
+            removeBtn.disabled = false;
+          }
+        });
+        row.appendChild(nameSpan);
+        row.appendChild(removeBtn);
+        depList.appendChild(row);
+      });
+    };
+
+    const renderComments = (comments) => {
+      commentList.innerHTML = '';
+      if (!comments.length) {
+        commentList.appendChild(makeSkeleton('No comments yet.'));
+        return;
+      }
+      comments.forEach((comment) => {
+        const row = document.createElement('article');
+        row.className = 'planner-comment-item';
+        const head = document.createElement('div');
+        head.className = 'planner-comment-item__head';
+        const author = document.createElement('strong');
+        author.textContent = String(comment.author_name || 'Asana user');
+        const when = document.createElement('span');
+        when.className = 'text-muted small';
+        when.textContent = String(comment.created_display || formatTimelineWhen(comment.created_at || ''));
+        head.appendChild(author);
+        head.appendChild(when);
+        const text = document.createElement('p');
+        text.className = 'planner-comment-item__text';
+        text.textContent = String(comment.text || '').trim();
+        row.appendChild(head);
+        row.appendChild(text);
+        commentList.appendChild(row);
+      });
+    };
+
+    commentPostBtn.addEventListener('click', async () => {
+      const replyUrl = asanaCommentAddUrlForTask(taskGid);
+      if (!replyUrl) return;
+      const text = String(commentTextarea.value || '').trim();
+      if (!text) return;
+      commentPostBtn.disabled = true;
+      try {
+        const payload = await postJson(replyUrl, { text });
+        commentTextarea.value = '';
+        const newComment = (payload && payload.comment) ? payload.comment : { author_name: 'Asana user', text, created_at: new Date().toISOString() };
+        const existingItems = commentList.querySelectorAll('.planner-comment-item');
+        if (!existingItems.length) {
+          renderComments([newComment]);
+        } else {
+          const row = document.createElement('article');
+          row.className = 'planner-comment-item';
+          const head = document.createElement('div');
+          head.className = 'planner-comment-item__head';
+          const author = document.createElement('strong');
+          author.textContent = String(newComment.author_name || 'Asana user');
+          const when = document.createElement('span');
+          when.className = 'text-muted small';
+          when.textContent = String(newComment.created_display || formatTimelineWhen(newComment.created_at || new Date().toISOString()));
+          head.appendChild(author);
+          head.appendChild(when);
+          const textEl = document.createElement('p');
+          textEl.className = 'planner-comment-item__text';
+          textEl.textContent = String(newComment.text || text);
+          row.appendChild(head);
+          row.appendChild(textEl);
+          commentList.appendChild(row);
+        }
+      } catch (error) {
+        window.alert(`Unable to post comment: ${String(error && error.message ? error.message : 'request_failed')}`);
+      } finally {
+        commentPostBtn.disabled = false;
+      }
+    });
+
+    // ── Attach to DOM ─────────────────────────────────────────────
+    document.body.appendChild(overlay);
+    activeTaskDrawer = overlay;
+    document.addEventListener('keydown', handleDrawerEscape);
+
+    // ── Async data fetches ────────────────────────────────────────
+    const subtasksUrl = asanaSubtasksUrlForTask(taskGid);
+    const attachmentsUrl = asanaAttachmentsUrlForTask(taskGid);
+    const dependenciesUrl = asanaDependenciesUrlForTask(taskGid);
+    const commentsUrl = asanaCommentsUrlForTask(taskGid);
+
+    Promise.allSettled([
+      subtasksUrl ? fetchJson(subtasksUrl) : Promise.resolve(null),
+      attachmentsUrl ? fetchJson(attachmentsUrl) : Promise.resolve(null),
+      dependenciesUrl ? fetchJson(dependenciesUrl) : Promise.resolve(null),
+      commentsUrl ? fetchJson(commentsUrl) : Promise.resolve(null),
+    ]).then(([subtasksResult, attachmentsResult, depsResult, commentsResult]) => {
+      if (subtasksResult.status === 'fulfilled' && subtasksResult.value) {
+        renderSubtasks(Array.isArray(subtasksResult.value.subtasks) ? subtasksResult.value.subtasks : []);
+      } else {
+        subtaskList.innerHTML = '';
+        subtaskList.appendChild(makeSkeleton('Unable to load subtasks.'));
+      }
+      if (attachmentsResult.status === 'fulfilled' && attachmentsResult.value) {
+        renderAttachments(Array.isArray(attachmentsResult.value.attachments) ? attachmentsResult.value.attachments : []);
+      } else {
+        attachList.innerHTML = '';
+        attachList.appendChild(makeSkeleton('Unable to load attachments.'));
+      }
+      if (depsResult.status === 'fulfilled' && depsResult.value) {
+        renderDeps(Array.isArray(depsResult.value.dependencies) ? depsResult.value.dependencies : []);
+      } else {
+        depList.innerHTML = '';
+        depList.appendChild(makeSkeleton('Unable to load dependencies.'));
+      }
+      if (commentsResult.status === 'fulfilled' && commentsResult.value) {
+        renderComments(Array.isArray(commentsResult.value.comments) ? commentsResult.value.comments : []);
+      } else {
+        commentList.innerHTML = '';
+        commentList.appendChild(makeSkeleton('Unable to load comments.'));
+      }
+    });
+  };
+
   const sourceItemIdForAgendaItem = (item) => {
     if (!item || typeof item !== 'object') return '';
     const direct = String(
@@ -1400,6 +1975,8 @@
         itemBadges.push({ id: 'subtasks', label: `${subtaskCount} subtask${subtaskCount !== 1 ? 's' : ''}`, title: `${subtaskCount} subtask${subtaskCount !== 1 ? 's' : ''}` });
       }
 
+      const boards = asanaBoardRowsForTask(row);
+
       const item = {
         id: agendaItemId,
         title: String(row.name || '').trim() || `Asana task ${gid}`,
@@ -1415,14 +1992,12 @@
         isExternal: true,
         badges: itemBadges,
         actions: [
-          { id: 'comments', label: 'Comments' },
-          { id: 'move-section', label: 'Move to section' },
+          ...(boards.length ? [{ id: 'move-section', label: 'Move to section' }] : []),
           { id: 'delete', label: 'Delete' },
         ],
         sortKey: `${sortPrefix}-${sortDirection}-${String(row.name || '').trim().toLowerCase()}`,
       };
 
-      const boards = asanaBoardRowsForTask(row);
       if (!boards.length) {
         ensureBoardBucket({ name: 'Unassigned', gid: '' }).items.push(item);
         return;
@@ -1621,16 +2196,17 @@
           await openAsanaDeleteTaskModal(item);
           return;
         }
-        if (normalizedAction === 'comments') {
-          await openAsanaCommentsModal(item);
-          return;
-        }
         if (normalizedAction === 'attach-resources') {
           await openAgendaResourceMappingModal(item);
           return;
         }
         if (normalizedAction === 'move-section') {
           await openAsanaMoveToSectionModal(item, section || {});
+        }
+      },
+      onItemClick: (item) => {
+        if (plannerItemSource(item) === 'asana') {
+          openAsanaTaskDrawer(item);
         }
       },
       onToggleError: handleAsanaToggleError,

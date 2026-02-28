@@ -146,6 +146,7 @@
               source: String(row && row.source ? row.source : '').trim().toLowerCase(),
               taskGid: String(row && (row.task_gid || row.taskGid) ? (row.task_gid || row.taskGid) : '').trim(),
               isExternal: Boolean(row && (row.isExternal || row.external)),
+              inlineComment: Boolean(row && row.inlineComment),
               actions: Array.isArray(row && row.actions)
                 ? row.actions
                   .map((action, actionIndex) => ({
@@ -247,6 +248,8 @@
     const onToggleError = typeof options.onToggleError === 'function' ? options.onToggleError : null;
     const onAgendaSectionAction = typeof options.onAgendaSectionAction === 'function' ? options.onAgendaSectionAction : null;
     const onActionError = typeof options.onActionError === 'function' ? options.onActionError : null;
+    const onInlineComment = typeof options.onInlineComment === 'function' ? options.onInlineComment : null;
+    const onItemClick = typeof options.onItemClick === 'function' ? options.onItemClick : null;
     const listWindowDays = Math.max(7, Number.parseInt(String(options.listWindowDays || '21'), 10) || 21);
     const monthEmptyText = String(options.monthEmptyText || 'No agenda items for this day.');
     const listEmptyText = String(options.listEmptyText || 'No upcoming items in this range.');
@@ -500,7 +503,28 @@
 
       const titleWrap = document.createElement('strong');
       titleWrap.className = 'planner-item__title';
-      if (item.url) {
+      if (onItemClick) {
+        const titleBtn = document.createElement('button');
+        titleBtn.type = 'button';
+        titleBtn.className = 'planner-item__title-btn';
+        titleBtn.textContent = item.title;
+        titleBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onItemClick(item);
+        });
+        titleWrap.appendChild(titleBtn);
+        if (item.url) {
+          const extLink = document.createElement('a');
+          extLink.href = item.url;
+          extLink.target = '_blank';
+          extLink.rel = 'noopener noreferrer';
+          extLink.className = 'planner-item__ext-link';
+          extLink.title = 'Open in Asana';
+          extLink.textContent = '↗';
+          titleWrap.appendChild(extLink);
+        }
+      } else if (item.url) {
         const link = document.createElement('a');
         link.href = item.url;
         link.target = '_blank';
@@ -574,6 +598,77 @@
       }
       if (meta.childNodes.length > 0) {
         body.appendChild(meta);
+      }
+      if (item.inlineComment && onInlineComment) {
+        const commentStrip = document.createElement('div');
+        commentStrip.className = 'planner-item__inline-comment';
+
+        [
+          { label: '🎉', text: '🎉' },
+          { label: '👍', text: '👍' },
+          { label: '✅', text: '✅' },
+          { label: 'Awesome!', text: 'Awesome!' },
+          { label: 'Great work!', text: 'Great work!' },
+        ].forEach(({ label, text }) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'planner-item__react-btn';
+          btn.textContent = label;
+          btn.setAttribute('aria-label', `React: ${text}`);
+          btn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            btn.disabled = true;
+            try {
+              await onInlineComment(item, text);
+              btn.classList.add('is-sent');
+              setTimeout(() => { btn.classList.remove('is-sent'); btn.disabled = false; }, 1200);
+            } catch (error) {
+              btn.disabled = false;
+            }
+          });
+          commentStrip.appendChild(btn);
+        });
+
+        const textInput = document.createElement('input');
+        textInput.type = 'text';
+        textInput.className = 'planner-item__comment-input';
+        textInput.placeholder = 'Comment…';
+        textInput.maxLength = 500;
+        textInput.addEventListener('click', (event) => { event.stopPropagation(); });
+
+        const sendBtn = document.createElement('button');
+        sendBtn.type = 'button';
+        sendBtn.className = 'planner-item__comment-send';
+        sendBtn.textContent = '↵';
+        sendBtn.setAttribute('aria-label', 'Send comment');
+
+        const doSend = async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const text = String(textInput.value || '').trim();
+          if (!text) return;
+          sendBtn.disabled = true;
+          try {
+            await onInlineComment(item, text);
+            textInput.value = '';
+            sendBtn.classList.add('is-sent');
+            setTimeout(() => { sendBtn.classList.remove('is-sent'); sendBtn.disabled = false; }, 1200);
+          } catch (error) {
+            sendBtn.disabled = false;
+          }
+        };
+
+        sendBtn.addEventListener('click', doSend);
+        textInput.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            doSend(event);
+          }
+        });
+
+        commentStrip.appendChild(textInput);
+        commentStrip.appendChild(sendBtn);
+        body.appendChild(commentStrip);
       }
       row.appendChild(body);
       return row;

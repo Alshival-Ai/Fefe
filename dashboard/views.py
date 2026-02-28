@@ -3732,6 +3732,7 @@ def _asana_task_row_from_api_task(
         "assignee_gid": assignee_gid,
         "assignee_name": assignee_name,
         "subtask_count": subtask_count,
+        "workspace_gid": workspace_gid,
     }
 
 
@@ -6893,7 +6894,8 @@ def list_asana_task_subtasks(request, task_gid: str):
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
     subtasks, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/tasks/{resolved_task_gid}/subtasks",
+        access_token=access_token,
+        path=f"/tasks/{resolved_task_gid}/subtasks",
         params={"opt_fields": "gid,name,completed,due_on,assignee.name"},
         max_items=100,
     )
@@ -6901,7 +6903,8 @@ def list_asana_task_subtasks(request, task_gid: str):
         refreshed, _ = _asana_access_token_for_user(request.user, force_refresh=True)
         if refreshed:
             subtasks, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/tasks/{resolved_task_gid}/subtasks",
+                access_token=refreshed,
+                path=f"/tasks/{resolved_task_gid}/subtasks",
                 params={"opt_fields": "gid,name,completed,due_on,assignee.name"},
                 max_items=100,
             )
@@ -6930,7 +6933,8 @@ def list_asana_project_sections(request, board_gid: str):
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
     sections, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/projects/{resolved_board_gid}/sections",
+        access_token=access_token,
+        path=f"/projects/{resolved_board_gid}/sections",
         params={"opt_fields": "gid,name"},
         max_items=200,
     )
@@ -6938,7 +6942,8 @@ def list_asana_project_sections(request, board_gid: str):
         refreshed, _ = _asana_access_token_for_user(request.user, force_refresh=True)
         if refreshed:
             sections, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/projects/{resolved_board_gid}/sections",
+                access_token=refreshed,
+                path=f"/projects/{resolved_board_gid}/sections",
                 params={"opt_fields": "gid,name"},
                 max_items=200,
             )
@@ -7023,7 +7028,8 @@ def list_asana_workspace_members(request, workspace_gid: str):
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
     members, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/workspaces/{resolved_workspace_gid}/users",
+        access_token=access_token,
+        path=f"/workspaces/{resolved_workspace_gid}/users",
         params={"opt_fields": "gid,name,email"},
         max_items=500,
     )
@@ -7031,7 +7037,8 @@ def list_asana_workspace_members(request, workspace_gid: str):
         refreshed, _ = _asana_access_token_for_user(request.user, force_refresh=True)
         if refreshed:
             members, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/workspaces/{resolved_workspace_gid}/users",
+                access_token=refreshed,
+                path=f"/workspaces/{resolved_workspace_gid}/users",
                 params={"opt_fields": "gid,name,email"},
                 max_items=500,
             )
@@ -7054,7 +7061,8 @@ def list_asana_task_dependencies(request, task_gid: str):
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
     deps, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/tasks/{resolved_task_gid}/dependencies",
+        access_token=access_token,
+        path=f"/tasks/{resolved_task_gid}/dependencies",
         params={"opt_fields": "gid,name,completed"},
         max_items=100,
     )
@@ -7062,7 +7070,8 @@ def list_asana_task_dependencies(request, task_gid: str):
         refreshed, _ = _asana_access_token_for_user(request.user, force_refresh=True)
         if refreshed:
             deps, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/tasks/{resolved_task_gid}/dependencies",
+                access_token=refreshed,
+                path=f"/tasks/{resolved_task_gid}/dependencies",
                 params={"opt_fields": "gid,name,completed"},
                 max_items=100,
             )
@@ -7148,7 +7157,8 @@ def get_asana_project_status(request, board_gid: str):
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
     statuses, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/projects/{resolved_board_gid}/project_statuses",
+        access_token=access_token,
+        path=f"/projects/{resolved_board_gid}/project_statuses",
         params={"opt_fields": "gid,title,color,text,created_at,author.name", "limit": 5},
         max_items=5,
     )
@@ -7156,7 +7166,8 @@ def get_asana_project_status(request, board_gid: str):
         refreshed, _ = _asana_access_token_for_user(request.user, force_refresh=True)
         if refreshed:
             statuses, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/projects/{resolved_board_gid}/project_statuses",
+                access_token=refreshed,
+                path=f"/projects/{resolved_board_gid}/project_statuses",
                 params={"opt_fields": "gid,title,color,text,created_at,author.name", "limit": 5},
                 max_items=5,
             )
@@ -7176,7 +7187,8 @@ def list_asana_task_attachments(request, task_gid: str):
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
     attachments, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/tasks/{resolved_task_gid}/attachments",
+        access_token=access_token,
+        path=f"/tasks/{resolved_task_gid}/attachments",
         params={"opt_fields": "gid,name,download_url,view_url,created_at,size"},
         max_items=100,
     )
@@ -7184,7 +7196,8 @@ def list_asana_task_attachments(request, task_gid: str):
         refreshed, _ = _asana_access_token_for_user(request.user, force_refresh=True)
         if refreshed:
             attachments, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/tasks/{resolved_task_gid}/attachments",
+                access_token=refreshed,
+                path=f"/tasks/{resolved_task_gid}/attachments",
                 params={"opt_fields": "gid,name,download_url,view_url,created_at,size"},
                 max_items=100,
             )
