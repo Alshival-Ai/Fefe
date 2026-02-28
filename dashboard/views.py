@@ -3883,13 +3883,16 @@ def _asana_overview_payload_from_api(
         workspace_name_by_gid[workspace_gid] = str(workspace.get("name") or "").strip()
         workspace_gids.append(workspace_gid)
 
-    # /users/me/projects requires a workspace parameter — fetch per workspace.
+    # Fetch all workspace projects (not just user-member ones) so tasks assigned
+    # to any team member are visible.  /projects?workspace= returns every project
+    # in the workspace the token owner can access; /users/me/projects would only
+    # return projects where the user is an explicit member.
     projects: list[dict[str, object]] = []
     projects_truncated = False
     for workspace_gid in workspace_gids:
         ws_projects, ws_projects_truncated, ws_project_error = _asana_api_list(
             access_token=access_token,
-            path="/users/me/projects",
+            path="/projects",
             params={
                 "workspace": workspace_gid,
                 "opt_fields": "gid,name,permalink_url,archived,workspace.gid,workspace.name",
@@ -3958,6 +3961,9 @@ def _asana_overview_payload_from_api(
 
     # Also fetch tasks from each project so all project tasks appear,
     # not just those assigned to the current user.
+    project_completed_since = (
+        datetime.now(timezone.utc) - timedelta(days=_ASANA_AGENDA_COMPLETED_WINDOW_DAYS)
+    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     for project in projects:
         if fetched_count >= resolved_task_fetch_limit:
             truncated = True
@@ -3972,7 +3978,7 @@ def _asana_overview_payload_from_api(
             access_token=access_token,
             path=f"/projects/{project_gid}/tasks",
             params={
-                "completed_since": "now",
+                "completed_since": project_completed_since,
                 "limit": _ASANA_OVERVIEW_PER_REQUEST_LIMIT,
                 "opt_fields": _ASANA_TASK_OPT_FIELDS,
             },

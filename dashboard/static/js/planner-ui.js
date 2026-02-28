@@ -448,7 +448,28 @@
 
       const titleWrap = document.createElement('strong');
       titleWrap.className = 'planner-item__title';
-      if (item.url) {
+      if (onItemClick) {
+        const titleBtn = document.createElement('button');
+        titleBtn.type = 'button';
+        titleBtn.className = 'planner-item__title-btn';
+        titleBtn.textContent = item.title;
+        titleBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onItemClick(item);
+        });
+        titleWrap.appendChild(titleBtn);
+        if (item.url) {
+          const extLink = document.createElement('a');
+          extLink.href = item.url;
+          extLink.target = '_blank';
+          extLink.rel = 'noopener noreferrer';
+          extLink.className = 'planner-item__ext-link';
+          extLink.title = 'Open in Asana';
+          extLink.textContent = '↗';
+          titleWrap.appendChild(extLink);
+        }
+      } else if (item.url) {
         const link = document.createElement('a');
         link.href = item.url;
         link.target = '_blank';

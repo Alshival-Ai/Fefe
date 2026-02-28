@@ -113,7 +113,7 @@ html.ui-visible .page-content {
   border-radius: 22px;
   padding: 1.8rem 1.4rem 1.25rem;
   background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
   text-align: center;
 }
@@ -291,7 +291,7 @@ input:focus {
   padding: 0.85rem;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.25);
+  background: rgba(15, 23, 42, 0.52);
 }
 
 .ssh-group-header {
@@ -339,7 +339,7 @@ p {
   position: sticky;
   top: 0;
   z-index: 10;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(20px);
 }
 
 .light-style .topbar {
@@ -841,7 +841,7 @@ p {
   padding: 2rem 1.6rem;
   border-right: 1px solid var(--border);
   background: rgba(12, 19, 36, 0.9);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(20px);
   display: flex;
   flex-direction: column;
   gap: 2rem;
@@ -922,14 +922,14 @@ p {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.25);
+  background: rgba(15, 23, 42, 0.52);
   padding: 0.45rem 0.5rem;
   display: grid;
   gap: 0.1rem;
 }
 
 .light-style .sidenav-widget-stat {
-  background: rgba(255, 255, 255, 0.74);
+  background: rgba(255, 255, 255, 0.89);
 }
 
 .sidenav-widget-stat__label {
@@ -1309,7 +1309,7 @@ p {
 .overview-followup-item {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.65rem 0.75rem;
   display: flex;
   align-items: flex-start;
@@ -1372,7 +1372,7 @@ p {
   border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 12px;
   padding: 0.65rem 0.72rem;
-  background: rgba(15, 23, 42, 0.32);
+  background: rgba(15, 23, 42, 0.52);
   color: #e2e8f0;
 }
 
@@ -1382,7 +1382,7 @@ p {
 }
 
 .light-style .overview-chat-compose textarea {
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.90);
   color: #0f172a;
 }
 
@@ -1491,7 +1491,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.45rem 0.9rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   font-weight: 500;
 }
 
@@ -1538,7 +1538,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 0.8rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
 }
 
 .light-style .settings-api-box {
@@ -1569,7 +1569,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 0.85rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1642,7 +1642,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 0.85rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   display: grid;
   gap: 0.7rem;
 }
@@ -1785,7 +1785,7 @@ p {
 .directory-user-row {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(15, 23, 42, 0.50);
   color: var(--text);
   padding: 0.6rem 0.65rem;
   text-align: left;
@@ -1866,7 +1866,7 @@ p {
 .directory-meta-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.75rem;
 }
 
@@ -1911,7 +1911,7 @@ p {
 .directory-team-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.65rem;
   display: grid;
   gap: 0.5rem;
@@ -1983,7 +1983,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.7rem 0.8rem;
-  background: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.48);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.83rem;
@@ -2025,7 +2025,7 @@ p {
 .team-member-option {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.16);
+  background: rgba(15, 23, 42, 0.46);
   padding: 0.55rem 0.6rem;
   display: flex;
   align-items: flex-start;
@@ -2187,7 +2187,7 @@ p {
 .team-chat-feed {
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.26);
+  background: rgba(15, 23, 42, 0.54);
   min-height: 340px;
   max-height: 520px;
   overflow: auto;
@@ -2392,7 +2392,7 @@ p {
   border: 1px solid rgba(148, 163, 184, 0.26);
   border-radius: 999px;
   padding: 0.2rem;
-  background: rgba(15, 23, 42, 0.34);
+  background: rgba(15, 23, 42, 0.52);
 }
 
 .light-style .planner-view-switch {
@@ -2432,11 +2432,11 @@ p {
   padding: 0.55rem 0.62rem;
   display: grid;
   gap: 0.2rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
 }
 
 .light-style .planner-stat-card {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .planner-stat-card span {
@@ -2490,7 +2490,7 @@ p {
 .planner-filter-chip {
   border: 1px solid rgba(148, 163, 184, 0.26);
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(15, 23, 42, 0.50);
   color: var(--muted);
   padding: 0.26rem 0.55rem;
   font-size: 0.74rem;
@@ -2502,7 +2502,7 @@ p {
 }
 
 .light-style .planner-filter-chip {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .planner-filter-chip span {
@@ -2567,7 +2567,7 @@ p {
   min-height: 74px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.26);
+  background: rgba(15, 23, 42, 0.54);
   color: var(--text);
   display: grid;
   grid-template-rows: auto 1fr;
@@ -2579,7 +2579,7 @@ p {
 }
 
 .light-style .planner-day {
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.90);
 }
 
 .planner-day:hover {
@@ -2657,7 +2657,7 @@ p {
 .planner-agenda-shell {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(15, 23, 42, 0.50);
   padding: 0.7rem;
   display: grid;
   gap: 0.55rem;
@@ -2665,7 +2665,7 @@ p {
 }
 
 .light-style .planner-agenda-shell {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .planner-agenda-head {
@@ -2776,7 +2776,7 @@ p {
 .planner-agenda-group {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.45rem;
   display: grid;
   gap: 0.35rem;
@@ -2912,7 +2912,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.45rem 0.5rem;
-  background: rgba(15, 23, 42, 0.3);
+  background: rgba(15, 23, 42, 0.50);
 }
 
 .planner-comment-item__head {
@@ -3171,11 +3171,11 @@ p {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.58rem 0.64rem;
-  background: rgba(15, 23, 42, 0.16);
+  background: rgba(15, 23, 42, 0.46);
 }
 
 .light-style .planner-integration-card {
-  background: rgba(255, 255, 255, 0.74);
+  background: rgba(255, 255, 255, 0.89);
 }
 
 @media (max-width: 1400px) {
@@ -3264,7 +3264,7 @@ p {
 .team-filter-banner {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.65rem 0.8rem;
   display: flex;
   align-items: center;
@@ -3301,11 +3301,11 @@ p {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 0.7rem 0.75rem;
-  background: rgba(15, 23, 42, 0.24);
+  background: rgba(15, 23, 42, 0.52);
 }
 
 .light-style .wiki-scope-lock {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .team-folder-title {
@@ -3406,7 +3406,7 @@ p {
   border-color: rgba(79, 140, 255, 0.34);
   background:
     linear-gradient(135deg, rgba(79, 140, 255, 0.16), rgba(15, 23, 42, 0.24)),
-    rgba(15, 23, 42, 0.22);
+    rgba(15, 23, 42, 0.52);
   padding: 0.8rem 0.9rem;
   flex-wrap: wrap;
 }
@@ -3652,7 +3652,7 @@ p {
 }
 
 .light-style .wiki-rendered {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.89);
 }
 
 .wiki-rendered h1,
@@ -3905,7 +3905,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.65rem 0.72rem;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(15, 23, 42, 0.50);
 }
 
 .light-style .wiki-editor-scope-lock {
@@ -3990,7 +3990,7 @@ p {
   gap: 0.55rem;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.65rem 0.75rem;
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
@@ -5433,7 +5433,7 @@ body.modal-open {
 .alert-option-card {
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.24);
+  background: rgba(15, 23, 42, 0.52);
   padding: 0.8rem;
   display: grid;
   gap: 0.7rem;
@@ -5476,7 +5476,7 @@ body.modal-open {
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 10px;
   padding: 0.45rem 0.55rem;
-  background: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.48);
   font-size: 0.84rem;
 }
 
@@ -5513,7 +5513,7 @@ body.modal-open {
 .overview-signal {
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.6rem 0.7rem;
   display: grid;
   gap: 0.25rem;
@@ -5541,7 +5541,7 @@ body.modal-open {
 .overview-meta-item {
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.44);
   padding: 0.5rem 0.6rem;
   display: grid;
   gap: 0.2rem;
@@ -5617,7 +5617,7 @@ body.modal-open {
   overflow: auto;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   padding: 0.6rem;
   display: grid;
   gap: 0.55rem;
@@ -5935,7 +5935,7 @@ body.modal-open {
 .health-chart-wrap {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(15, 23, 42, 0.50);
   padding: 0.6rem 0.7rem 0.5rem;
   display: grid;
   gap: 0.45rem;
@@ -6005,7 +6005,7 @@ body.modal-open {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 12px;
   padding: 0.65rem 0.75rem;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(15, 23, 42, 0.50);
   display: grid;
   gap: 0.35rem;
 }
@@ -6099,7 +6099,7 @@ body.modal-open {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.5rem 0.6rem;
-  background: rgba(15, 23, 42, 0.16);
+  background: rgba(15, 23, 42, 0.46);
 }
 
 @media (max-width: 640px) {
@@ -6228,7 +6228,7 @@ body.modal-open {
   height: 120px;
   border-radius: 14px;
   border: 1px dashed rgba(148, 163, 184, 0.35);
-  background: rgba(15, 23, 42, 0.3);
+  background: rgba(15, 23, 42, 0.50);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6256,7 +6256,7 @@ body.modal-open {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.75rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.48);
   display: grid;
   gap: 0.45rem;
 }
