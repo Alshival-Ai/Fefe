@@ -2,6 +2,10 @@
 
 Django-based infrastructure/resource management app.
 
+> **Multi-developer project.** Multiple developers push to a single `main` branch on GitHub.
+> Always run `git pull` before starting work and always pass `--build` to Docker Compose
+> after pulling so your container picks up the latest code changes.
+
 ## Setup and Installation
 
 1. Create and activate a virtual environment:
@@ -93,9 +97,14 @@ Notes:
 
 ## Docker
 
+> **Always use `--build`** when running Docker Compose after a `git pull`. This ensures the
+> container image is rebuilt with the latest code. Omitting `--build` will run a stale image
+> that does not include recent changes from other developers.
+
 ### Production-style run
 
 ```bash
+git pull
 docker compose up --build
 ```
 
@@ -151,13 +160,14 @@ TLS certs:
 
 ### Fast dev loop (recommended)
 
-Initial build:
+Initial build (and after every `git pull`):
 
 ```bash
+git pull
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-After that, use:
+After that, if you haven't pulled new changes, you can skip `--build`:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
@@ -165,8 +175,11 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 Why this is faster:
 - Source is bind-mounted into the container (`.:/app`)
-- `uvicorn --reload` auto-restarts on code changes
+- `uvicorn --reload` auto-restarts on code changes without needing a rebuild
 - `collectstatic` is skipped in dev (`RUN_COLLECTSTATIC=0`)
+
+> Note: Even with bind-mount + `--reload`, **new Python dependencies** (added to `requirements.txt`)
+> require `--build` to be installed inside the container.
 
 App URL: `http://127.0.0.1:8000`
 

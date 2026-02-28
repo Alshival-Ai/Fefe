@@ -1,5 +1,33 @@
 # DEV
 
+## Multi-Developer Workflow
+
+This is a team project. Multiple developers and AI agents push to a single `main` branch on GitHub.
+
+### Before starting any work
+```bash
+git pull
+```
+
+### After pulling — local dev
+```bash
+source .venv/bin/activate
+python manage.py migrate      # apply any new migrations from teammates
+./scripts/dev.sh              # starts uvicorn with --reload
+```
+
+### After pulling — Docker dev
+```bash
+# Always --build after a pull so the container gets the latest code + any new deps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+### Committing
+- Prefer small, focused commits.
+- Run `python manage.py check` before committing.
+- If you added models: run `python manage.py makemigrations` and commit the migration file.
+- Do not commit `.env`, `var/`, or `.venv/`.
+
 ## Prerequisites
 - Python 3.13
 - Node.js 18+ (only if working on the optional Vite frontend)
@@ -76,21 +104,39 @@ python manage.py migrate
 - SQLite DB: `var/db.sqlite3`
 
 ## Recent Dev Notes
+
 - Resource details page includes a header alert icon and persisted alert settings form.
 - Resource header includes copy-to-clipboard `ALSHIVAL_RESOURCE=<absolute-resource-url>`.
 - Notes on resource details now render user avatars when available from social account metadata.
 - API keys list in resource details now fills available card height and scrolls internally.
-- Superuser Ask Alshival shell now resolves to per-user home directories under:
-  - `USER_DATA_ROOT/<slug-username>-<user_id>/home`
-  - created on first shell launch.
-- Resource detail endpoints now support both user and team routes:
-  - `/u/<username>/resources/<uuid>/...`
-  - `/team/<team_name>/resources/<uuid>/...`
+- Superuser Ask Alshival shell now resolves to per-user home directories under `USER_DATA_ROOT/<slug-username>-<user_id>/home`.
+- Resource detail endpoints now support both user and team routes: `/u/<username>/resources/<uuid>/...` and `/team/<team_name>/resources/<uuid>/...`
 - Canonical route forwarding is implemented via `ResourceRouteAlias`.
 - Resource package ownership/moves are tracked by `ResourcePackageOwner` and `transfer_resource_package(...)`.
 - Alert defaults are App enabled, SMS/Email disabled.
+- Asana extended API (2026-02) — new endpoints in `dashboard/views.py` + `dashboard/urls.py`:
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/calendar/asana/tasks/<gid>/subtasks/` | GET | List subtasks |
+| `/calendar/asana/boards/<gid>/sections/` | GET | List project sections |
+| `/calendar/asana/sections/<gid>/add-task/` | POST | Move task to section |
+| `/calendar/asana/tasks/<gid>/assign/` | POST | Update task assignee |
+| `/calendar/asana/workspaces/<gid>/members/` | GET | List workspace members |
+| `/calendar/asana/tasks/<gid>/dependencies/` | GET | List dependencies |
+| `/calendar/asana/tasks/<gid>/dependencies/add/` | POST | Add dependency |
+| `/calendar/asana/tasks/<gid>/dependencies/remove/` | POST | Remove dependency |
+| `/calendar/asana/boards/<gid>/status/` | GET | Latest project status |
+| `/calendar/asana/tasks/<gid>/attachments/` | GET | List attachments |
+| `/calendar/asana/boards/<gid>/webhook/register/` | POST | Register webhook |
+| `/calendar/asana/webhook/receive/` | POST | Receive webhook events |
+
+  New MCP tools: `asana_get_subtasks`, `asana_list_sections`, `asana_move_task_to_section`, `asana_update_assignee`, `asana_list_workspace_members`, `asana_get_dependencies`, `asana_add_dependency`, `asana_remove_dependency`, `asana_get_project_status`, `asana_get_attachments`
+
+  Frontend: assignee badge, subtask count badge, and "Move to section" action added to Asana task rows in `home-overview.js`. `_ASANA_TASK_OPT_FIELDS` extended with `assignee.gid`, `assignee.name`, `num_subtasks`.
 
 ## Quick Manual QA (Resource Details)
+
 1. Open a resource detail page and verify:
    - Alert icon appears in top-right and opens/closes modal.
    - `ALSHIVAL_RESOURCE=...` button copies expected value.
@@ -109,4 +155,5 @@ python manage.py migrate
    - Confirm redirect lands on canonical `/team/<team>/resources/<uuid>/`.
 
 ## Branding Rule
+
 - Use `Alshival` in user-facing text. Do not reintroduce legacy `Fefe` naming in UI copy.

@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Multi-Developer Team Project
+
+**This is a collaborative project.** Multiple developers and AI agents push to a single `main` branch on GitHub. If you are an AI agent picking up this file:
+
+- **Always `git pull` before starting new work** — another developer may have landed changes since your last context.
+- **Always read the file you are about to edit** — do not assume your in-memory knowledge matches the current file on disk.
+- **Do not force-push to `main`.** Commit directly only for small isolated fixes; use a branch + PR for anything non-trivial.
+- **Docker users: always pass `--build`** when bringing up the stack after a `git pull` so the container image is rebuilt with the latest code changes.
+- The `./var` directory holds all runtime data (SQLite DBs, user files, knowledge base). It is bind-mounted and **not tracked in git**. Never run `docker volume prune` or `docker system prune --volumes` — this will destroy user data.
+
 ## Project Overview
 
 **Alshival** is a Django-based infrastructure/resource management app with a built-in MCP server and optional Vite/React frontend. The repo root is `Fefe/` but the brand name is always `Alshival` — do not reintroduce the legacy `Fefe` name in user-facing text, defaults, or UI labels.
@@ -102,7 +112,7 @@ docker compose -f docker-compose.yml -f docker-compose-https.yml up --build # + 
 
 ### MCP Server (`mcp/app.py`)
 
-FastAPI + MCP SDK server. Auth via `x-api-key` header (global/account/resource keys) or `Authorization: Bearer`. Identity resolved from `x-user-username`/`x-user-email`/`x-user-phone` headers. Twilio signature fallback for SMS callers. Tools: `search_kb`, `resource_kb`, `resource_health_check`, `resource_logs`, `resource_ssh_exec`, `alert_filter_prompt`, `search_users`, `directory`, `sms`, `calendar_context`.
+FastAPI + MCP SDK server. Auth via `x-api-key` header (global/account/resource keys) or `Authorization: Bearer`. Identity resolved from `x-user-username`/`x-user-email`/`x-user-phone` headers. Twilio signature fallback for SMS callers. Tools: `search_kb`, `resource_kb`, `resource_health_check`, `resource_logs`, `resource_ssh_exec`, `alert_filter_prompt`, `search_users`, `directory`, `sms`, `calendar_context`, `asana_calendar`, `asana_get_subtasks`, `asana_list_sections`, `asana_move_task_to_section`, `asana_update_assignee`, `asana_list_workspace_members`, `asana_get_dependencies`, `asana_add_dependency`, `asana_remove_dependency`, `asana_get_project_status`, `asana_get_attachments`.
 
 ### Frontend
 

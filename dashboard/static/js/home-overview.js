@@ -937,11 +937,41 @@
 
     const form = document.createElement('form');
     form.className = 'modal-form';
+
+    const quickReacts = document.createElement('div');
+    quickReacts.className = 'planner-comment-quickreact';
+    const quickReactLabel = document.createElement('span');
+    quickReactLabel.className = 'planner-comment-quickreact__label';
+    quickReactLabel.textContent = 'Quick react:';
+    quickReacts.appendChild(quickReactLabel);
+    [
+      { label: '🎉', text: '🎉' },
+      { label: '👍', text: '👍' },
+      { label: '✅', text: '✅' },
+      { label: 'Awesome!', text: 'Awesome!' },
+      { label: 'Great work!', text: 'Great work!' },
+    ].forEach(({ label, text }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'planner-comment-quickreact__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        textarea.value = text;
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+      });
+      quickReacts.appendChild(btn);
+    });
+    form.appendChild(quickReacts);
+
     const replyLabel = document.createElement('label');
     const replyTitle = document.createElement('span');
     replyTitle.textContent = 'Reply';
     const textarea = document.createElement('textarea');
-    textarea.rows = 4;
+    textarea.rows = 3;
     textarea.maxLength = 5000;
     textarea.placeholder = 'Add a comment to this Asana task…';
     replyLabel.appendChild(replyTitle);

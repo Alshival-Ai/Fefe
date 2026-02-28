@@ -1,5 +1,22 @@
 # PROD
 
+## Multi-Developer Deployment Note
+
+This is a team project with multiple developers pushing to `main`. When deploying after a `git pull`:
+
+```bash
+git pull
+docker compose up --build          # production
+# or
+docker compose -f docker-compose.yml -f docker-compose-https.yml up --build  # HTTPS
+```
+
+**Always pass `--build`** after pulling — this forces the Docker image to rebuild with the
+latest code and any new Python dependencies. Running without `--build` will serve a stale image.
+
+The `./var` bind-mount preserves all runtime data (DB, user files, knowledge base) across rebuilds.
+**Never** run `docker volume prune` or `docker system prune --volumes`.
+
 ## Runtime Overview
 - Main web app: Django + Uvicorn (`alshival.asgi:application`)
 - Background workers:

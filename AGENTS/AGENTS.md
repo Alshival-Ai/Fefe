@@ -1,5 +1,15 @@
 # Alshival App Technical Details
 
+## Multi-Developer Team Notice
+
+This codebase is actively developed by multiple humans and AI agents pushing to a single `main` branch on GitHub. If you are an AI agent reading this file:
+
+- **Pull before you edit.** Run `git pull` before starting any task.
+- **Read files before editing them.** Do not rely on context from a prior session — files may have changed.
+- **Check `AGENTS/DEV.md`** for the current development workflow and recent implementation notes.
+- **Docker users:** always pass `--build` after `git pull` to rebuild the container image with the latest changes.
+- **Never** run `docker volume prune` or `docker system prune --volumes` — all app data lives in the bind-mounted `./var` directory.
+
 ## Rule #1: Agent-Processed Outbound Alerts
 - Every outbound alert delivery decision must be processed by an agent before sending.
 - Applies to all alert channels: app notifications, SMS, and email.
@@ -546,3 +556,33 @@
   - `dashboard/static/css/app.css`
   - `dashboard/templates/pages/home.html`
   - `dashboard/templates/pages/resource_detail.html`
+
+### Asana Extended API (2026-02)
+Full Asana API surface added. New view functions in `dashboard/views.py`, registered in `dashboard/urls.py`.
+
+New endpoints:
+- `GET /calendar/asana/tasks/<gid>/subtasks/`
+- `GET /calendar/asana/boards/<gid>/sections/`
+- `POST /calendar/asana/sections/<gid>/add-task/`
+- `POST /calendar/asana/tasks/<gid>/assign/`
+- `GET /calendar/asana/workspaces/<gid>/members/`
+- `GET /calendar/asana/tasks/<gid>/dependencies/`
+- `POST /calendar/asana/tasks/<gid>/dependencies/add/`
+- `POST /calendar/asana/tasks/<gid>/dependencies/remove/`
+- `GET /calendar/asana/boards/<gid>/status/`
+- `GET /calendar/asana/tasks/<gid>/attachments/`
+- `POST /calendar/asana/boards/<gid>/webhook/register/`
+- `POST /calendar/asana/webhook/receive/` (csrf_exempt, handles Asana handshake + HMAC verification)
+
+Webhook secrets are stored per-user at `var/user_data/<user>/asana_webhooks.json`.
+
+New MCP tools in `mcp/app.py` (imported helpers from `dashboard.views`):
+`asana_get_subtasks`, `asana_list_sections`, `asana_move_task_to_section`, `asana_update_assignee`, `asana_list_workspace_members`, `asana_get_dependencies`, `asana_add_dependency`, `asana_remove_dependency`, `asana_get_project_status`, `asana_get_attachments`
+
+`_ASANA_TASK_OPT_FIELDS` extended with `assignee.gid`, `assignee.name`, `num_subtasks`.
+`_asana_task_row_from_api_task` now returns `assignee_gid`, `assignee_name`, `subtask_count`.
+
+Frontend (`home-overview.js`, `home.html`):
+- Assignee badge on task rows
+- Subtask count badge on task rows
+- "Move to section" action + modal on task rows
