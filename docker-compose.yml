@@ -108,6 +108,26 @@ services:
     volumes:
       - ./var:/app/var
     restart: unless-stopped
+  github-wiki-worker:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    image: alshival:latest
+    depends_on:
+      web:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DEBUG: "0"
+      ALLOWED_HOSTS: "127.0.0.1,localhost"
+      SQLITE_PATH: "/app/var/db.sqlite3"
+      USER_DATA_ROOT: "/app/var/user_data"
+      STATIC_ROOT: "/app/var/staticfiles"
+      RUN_MIGRATE: "0"
+      RUN_COLLECTSTATIC: "0"
+    command: ["python", "manage.py", "run_github_wiki_sync_worker", "--interval-seconds", "3600"]
+    volumes:
+      - ./var:/app/var
+    restart: unless-stopped
   global-key-worker:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     image: alshival:latest

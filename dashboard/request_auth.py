@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 import re
 
@@ -9,6 +10,8 @@ from django.contrib.auth import get_user_model
 from .global_api_key_store import is_valid_global_team_api_key
 from .models import ResourcePackageOwner, ResourceRouteAlias, ResourceTeamShare, SystemSetup, UserNotificationSettings
 from .resources_store import resolve_api_key_scope
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -124,7 +127,15 @@ def _resolve_user_by_member_api_key(*, api_key: str, resource_uuid: str = "") ->
     matched_user = None
     matched_scope = ""
     for candidate in User.objects.filter(is_active=True).order_by("id"):
-        scope = resolve_api_key_scope(candidate, resolved_key, resolved_uuid)
+        try:
+            scope = resolve_api_key_scope(candidate, resolved_key, resolved_uuid)
+        except Exception:
+            logger.debug(
+                "Skipping API key scope lookup for user id=%s due to lookup error.",
+                getattr(candidate, "id", None),
+                exc_info=True,
+            )
+            continue
         if scope not in {"account", "resource"}:
             continue
         if matched_user is not None and int(getattr(matched_user, "id", 0) or 0) != int(getattr(candidate, "id", 0) or 0):

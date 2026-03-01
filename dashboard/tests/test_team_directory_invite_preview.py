@@ -35,7 +35,7 @@ class TeamDirectoryInvitePreviewTests(TestCase):
         self.assertTrue(bool(payload.get("message_is_html")))
         self.assertIn("<!doctype html>", str(payload.get("message_html") or "").lower())
         self.assertNotIn("<script", str(payload.get("message_html") or "").lower())
-        self.assertIn("Additional sign-up options", str(payload.get("message_text") or ""))
+        self.assertNotIn("Additional sign-up options", str(payload.get("message_text") or ""))
         self.assertEqual(payload.get("message"), payload.get("message_html"))
 
     @patch("dashboard.views._generate_invite_delivery_message_with_agent")

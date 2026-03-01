@@ -51,14 +51,16 @@
     .page-content { opacity: 1; visibility: visible; }
     html.ui-visible .page-content { opacity: 1; visibility: visible; }
   </style>
-  <link rel="stylesheet" href="{% static 'css/app.css' %}" />
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260301g" />
   {% block page_css %}{% endblock page_css %}
   {% vite_hmr %}
   {% vite_asset 'src/main.jsx' %}
 </head>
 <body
   data-superuser="{% if request.user.is_authenticated and request.user.is_superuser %}1{% else %}0{% endif %}"
-  data-staff="{% if request.user.is_authenticated and request.user.is_staff %}1{% else %}0{% endif %}">
+  data-staff="{% if request.user.is_authenticated and request.user.is_staff %}1{% else %}0{% endif %}"
+  data-markdown-script-src="{% static 'js/marked.min.js' %}"
+  data-sanitizer-script-src="{% static 'js/purify.min.js' %}">
   <div class="page-loader" aria-hidden="true">
     <div class="page-loader__backdrop"></div>
     <div class="page-loader__card">
@@ -76,16 +78,23 @@
     {% block content %}{% endblock content %}
   </main>
   {% if request.user.is_authenticated %}
-  <button class="floating-ask-alshival setup-next-btn" type="button" aria-label="Ask Alshival" title="Ask Alshival">
-    <span class="floating-ask-alshival__icon" aria-hidden="true">💬</span>
-    <span class="setup-next-btn__label">Ask Alshival</span>
+  <button
+    class="floating-ask-alshival"
+    type="button"
+    aria-label="Ask Alshival"
+    title="Ask Alshival"
+    data-agent-bubble-duration-ms="5000"
+    data-markdown-script-src="{% static 'js/marked.min.js' %}"
+    data-sanitizer-script-src="{% static 'js/purify.min.js' %}">
+    <img class="floating-ask-alshival__logo" src="{% static 'img/branding/alshival-logo-276x186.png' %}" alt="Ask Alshival" />
   </button>
   {% endif %}
   <script src="{% static 'js/page-loader.js' %}"></script>
   <script src="{% static 'js/theme-toggle.js' %}"></script>
   <script src="{% static 'js/sidebar-mobile.js' %}"></script>
   <script src="{% static 'js/matrix-background.js' %}"></script>
-  <script src="{% static 'js/terminal-popup.js' %}?v=20260301b"></script>
+  <script src="{% static 'js/markdown-renderer.js' %}?v=20260301a"></script>
+  <script src="{% static 'js/terminal-popup.js' %}?v=20260301h"></script>
   <script src="{% static 'js/topbar-search.js' %}"></script>
   <script src="{% static 'js/topbar-notifications.js' %}"></script>
   {% block page_js %}{% endblock page_js %}

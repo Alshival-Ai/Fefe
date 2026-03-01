@@ -29,14 +29,17 @@ from dashboard.global_ssh_store import get_global_ssh_private_key
 from dashboard.request_auth import user_can_access_resource
 from dashboard.resources_store import (
     _decrypt_key_text,
+    create_account_api_key,
     get_resource,
     get_resource_by_uuid,
     get_ssh_credential_private_key,
+    resolve_api_key_scope,
 )
 
 
 WS_PATH = "/terminal/ws/"
 logger = logging.getLogger(__name__)
+_CODEX_MCP_RUNTIME_API_KEYS: dict[int, str] = {}
 
 
 def _ensure_terminal_env(env: dict[str, str]) -> dict[str, str]:
@@ -124,6 +127,31 @@ def _codex_mcp_api_key_value() -> str:
         return inherited
     fallback = str(os.getenv("MCP_API_KEY", "") or "").strip()
     return fallback
+
+
+def _get_runtime_codex_mcp_api_key_for_user(user) -> str:
+    configured = _codex_mcp_api_key_value()
+    if configured:
+        return configured
+    user_id = int(getattr(user, "id", 0) or 0)
+    if user_id <= 0:
+        return ""
+    cached = str(_CODEX_MCP_RUNTIME_API_KEYS.get(user_id) or "").strip()
+    if cached:
+        try:
+            if resolve_api_key_scope(user, cached, "") == "account":
+                return cached
+        except Exception:
+            pass
+        _CODEX_MCP_RUNTIME_API_KEYS.pop(user_id, None)
+    try:
+        _key_id, raw_key = create_account_api_key(user, "Codex MCP Runtime Key")
+    except Exception:
+        return ""
+    resolved = str(raw_key or "").strip()
+    if resolved:
+        _CODEX_MCP_RUNTIME_API_KEYS[user_id] = resolved
+    return resolved
 
 
 class TerminalWebSocketApp:
@@ -443,6 +471,7 @@ class HostShellSession(PTYProcessSession):
         super().__init__()
         self.user = user
         self._openai_api_key = str(openai_api_key or "").strip()
+        self._mcp_api_key_value = ""
         self._target_username = ""
         self._os_username = ""
         self._os_home = ""
@@ -638,6 +667,8 @@ class HostShellSession(PTYProcessSession):
 
     def _ensure_codex_ready_for_target(self) -> None:
         target_username = self._resolve_target_username()
+        if _codex_mcp_enabled():
+            self._mcp_api_key_value = _get_runtime_codex_mcp_api_key_for_user(self.user)
         ensure_flag = str(os.getenv("WEB_TERMINAL_ENSURE_CODEX", "1") or "").strip().lower()
         if ensure_flag not in {"0", "false", "no", "off"}:
             self._ensure_codex_global_install()
@@ -701,7 +732,8 @@ class HostShellSession(PTYProcessSession):
             raise RuntimeError("Unable to configure codex profile: missing python3.")
         profile_header = "[profiles.pro]"
         mcp_header = f"[mcp_servers.{_codex_mcp_server_name()}]"
-        mcp_enabled = _codex_mcp_enabled()
+        mcp_config_enabled = _codex_mcp_enabled()
+        mcp_enabled = mcp_config_enabled and bool(str(self._mcp_api_key_value or _codex_mcp_api_key_value()).strip())
         profile_lines = [
             'approval_policy = "never"',
             'sandbox_mode = "danger-full-access"',
@@ -710,8 +742,8 @@ class HostShellSession(PTYProcessSession):
             f'url = "{_codex_mcp_url()}"',
             "startup_timeout_sec = 20",
             "tool_timeout_sec = 90",
-            "enabled = true",
-            f'env_http_headers = {{ "{_codex_mcp_api_key_header()}" = "{_codex_mcp_api_key_env_name()}" }}',
+            f"enabled = {'true' if mcp_enabled else 'false'}",
+            f'bearer_token_env_var = "{_codex_mcp_api_key_env_name()}"',
         ]
         script = """
 import os
@@ -759,7 +791,7 @@ def upsert_section(lines, header, section_lines):
     return lines
 
 lines = upsert_section(lines, __PROFILE_HEADER__, __PROFILE_LINES__)
-if __MCP_ENABLED__:
+if __MCP_CONFIG_ENABLED__:
     lines = upsert_section(lines, __MCP_HEADER__, __MCP_LINES__)
 
 path.write_text("\\n".join(lines).rstrip() + "\\n", encoding="utf-8")
@@ -767,7 +799,7 @@ path.write_text("\\n".join(lines).rstrip() + "\\n", encoding="utf-8")
         script = (
             script.replace("__PROFILE_HEADER__", json.dumps(profile_header))
             .replace("__PROFILE_LINES__", json.dumps(profile_lines))
-            .replace("__MCP_ENABLED__", "True" if mcp_enabled else "False")
+            .replace("__MCP_CONFIG_ENABLED__", "True" if mcp_config_enabled else "False")
             .replace("__MCP_HEADER__", json.dumps(mcp_header))
             .replace("__MCP_LINES__", json.dumps(mcp_lines))
         )
@@ -850,7 +882,7 @@ path.write_text("\\n".join(lines).rstrip() + "\\n", encoding="utf-8")
             env["OPENAI_API_KEY"] = self._openai_api_key
         if _codex_mcp_enabled():
             mcp_key_name = _codex_mcp_api_key_env_name()
-            mcp_key_value = _codex_mcp_api_key_value()
+            mcp_key_value = str(self._mcp_api_key_value or _codex_mcp_api_key_value()).strip()
             if mcp_key_name and mcp_key_value:
                 env[mcp_key_name] = mcp_key_value
         return env
@@ -870,6 +902,7 @@ class LocalShellSession(PTYProcessSession):
         super().__init__()
         self.user = user
         self._openai_api_key = str(openai_api_key or "").strip()
+        self._mcp_api_key_value = ""
         self._resolved_username = ""
         self._resolved_home = ""
 
@@ -931,7 +964,7 @@ class LocalShellSession(PTYProcessSession):
             env["OPENAI_API_KEY"] = self._openai_api_key
         if _codex_mcp_enabled():
             mcp_key_name = _codex_mcp_api_key_env_name()
-            mcp_key_value = _codex_mcp_api_key_value()
+            mcp_key_value = str(self._mcp_api_key_value or _codex_mcp_api_key_value()).strip()
             if mcp_key_name and mcp_key_value:
                 env[mcp_key_name] = mcp_key_value
         return env
@@ -991,6 +1024,8 @@ class LocalShellSession(PTYProcessSession):
         return (self._resolved_username, self._resolved_home)
 
     def _prepare_local_environment_sync(self, home_dir: str):
+        if _codex_mcp_enabled():
+            self._mcp_api_key_value = _get_runtime_codex_mcp_api_key_for_user(self.user)
         self._ensure_codex_profile_sync(home_dir)
         self._ensure_codex_api_key_sync(home_dir)
         venv_dir = self._venv_dir(home_dir)
@@ -1057,8 +1092,7 @@ class LocalShellSession(PTYProcessSession):
                 self._resolve_local_identity()[0],
             )
 
-    @staticmethod
-    def _ensure_codex_profile_sync(home_dir: str) -> None:
+    def _ensure_codex_profile_sync(self, home_dir: str) -> None:
         config_dir = os.path.join(home_dir, ".codex")
         config_path = os.path.join(config_dir, "config.toml")
         try:
@@ -1120,7 +1154,9 @@ class LocalShellSession(PTYProcessSession):
                 ],
             )
 
-            if _codex_mcp_enabled():
+            mcp_config_enabled = _codex_mcp_enabled()
+            mcp_enabled = mcp_config_enabled and bool(str(self._mcp_api_key_value or _codex_mcp_api_key_value()).strip())
+            if mcp_config_enabled:
                 lines = upsert_section(
                     lines,
                     f"[mcp_servers.{_codex_mcp_server_name()}]",
@@ -1128,8 +1164,8 @@ class LocalShellSession(PTYProcessSession):
                         f'url = "{_codex_mcp_url()}"',
                         "startup_timeout_sec = 20",
                         "tool_timeout_sec = 90",
-                        "enabled = true",
-                        f'env_http_headers = {{ "{_codex_mcp_api_key_header()}" = "{_codex_mcp_api_key_env_name()}" }}',
+                        f"enabled = {'true' if mcp_enabled else 'false'}",
+                        f'bearer_token_env_var = "{_codex_mcp_api_key_env_name()}"',
                     ],
                 )
 

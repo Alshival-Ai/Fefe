@@ -5,14 +5,24 @@
   const ASK_POPOUT_FEATURES = 'popup=yes,width=520,height=760,resizable=yes,scrollbars=yes';
   const FONT_PREF_KEY = 'devtools_terminal_font_size';
   const ASK_CHAT_ENDPOINT = '/chat/ask/';
+  const ASK_CHAT_HISTORY_ENDPOINT = '/chat/history/';
+  const ASK_CHAT_HISTORY_CLEAR_ENDPOINT = '/chat/history/clear/';
+  const ASK_SESSION_GREETING_ENDPOINT = '/chat/session-greeting/';
   const ASK_VOICE_TOKEN_ENDPOINT = '/chat/voice-token/';
   const ASK_VOICE_LOG_ENDPOINT = '/chat/voice-log/';
   const ASK_POPOUT_PATH = '/chat/widget/';
+  const AGENT_BUBBLE_DEFAULT_MS = 5000;
+  const AGENT_BUBBLE_MIN_MS = 1200;
+  const AGENT_BUBBLE_MAX_MS = 60000;
 
   let xtermLoaderPromise = null;
   let askWidget = null;
   let askClient = null;
   let askWidgetDragCleanup = null;
+  let agentBubble = null;
+  let agentBubbleContent = null;
+  let agentBubbleHideTimer = null;
+  let agentBubbleRenderToken = 0;
   const embeddedAskMounts = new WeakMap();
   const root = document.body || document.documentElement;
   const isStaff = String(
@@ -26,6 +36,23 @@
     if (char === '"') return '&quot;';
     return '&#39;';
   });
+
+  const renderMarkdownInto = async (target, markdownText, options = {}) => {
+    if (!target) return '';
+    const source = String(markdownText || '').trim();
+    if (!source) {
+      target.innerHTML = '';
+      return '';
+    }
+    const markdown = window.AlshivalMarkdown;
+    if (markdown && typeof markdown.renderInto === 'function') {
+      try {
+        return await markdown.renderInto(target, source, options);
+      } catch (error) {}
+    }
+    target.innerHTML = `<p>${escapeHtml(source).replace(/\n/g, '<br>')}</p>`;
+    return target.innerHTML;
+  };
 
   const getCookie = (name) => {
     const value = `; ${document.cookie || ''}`;
@@ -56,6 +83,120 @@
     script.onerror = () => reject(new Error(`Failed to load ${src}`));
     document.head.appendChild(script);
   });
+
+  const parseDurationMs = (value, fallback) => {
+    const raw = Number(value);
+    if (!Number.isFinite(raw)) return fallback;
+    return Math.max(AGENT_BUBBLE_MIN_MS, Math.min(AGENT_BUBBLE_MAX_MS, Math.round(raw)));
+  };
+
+  const ensureAgentBubbleElement = () => {
+    if (agentBubble && agentBubbleContent) return;
+    agentBubble = document.createElement('aside');
+    agentBubble.className = 'floating-ask-agent-bubble';
+    agentBubble.setAttribute('aria-live', 'polite');
+    agentBubble.setAttribute('aria-atomic', 'true');
+    agentBubble.hidden = true;
+    agentBubble.innerHTML = `
+      <button type="button" class="floating-ask-agent-bubble__close" aria-label="Dismiss message">×</button>
+      <div class="floating-ask-agent-bubble__content"></div>
+    `;
+    document.body.appendChild(agentBubble);
+    agentBubbleContent = agentBubble.querySelector('.floating-ask-agent-bubble__content');
+    const closeButton = agentBubble.querySelector('.floating-ask-agent-bubble__close');
+    if (closeButton) {
+      closeButton.addEventListener('click', () => {
+        if (agentBubbleHideTimer) {
+          window.clearTimeout(agentBubbleHideTimer);
+          agentBubbleHideTimer = null;
+        }
+        if (agentBubble) {
+          agentBubble.classList.remove('is-visible');
+          window.setTimeout(() => {
+            if (!agentBubble || agentBubble.classList.contains('is-visible')) return;
+            agentBubble.hidden = true;
+          }, 180);
+        }
+      });
+    }
+  };
+
+  const hideAgentBubble = () => {
+    if (agentBubbleHideTimer) {
+      window.clearTimeout(agentBubbleHideTimer);
+      agentBubbleHideTimer = null;
+    }
+    if (!agentBubble) return;
+    agentBubble.classList.remove('is-visible');
+    window.setTimeout(() => {
+      if (!agentBubble || agentBubble.classList.contains('is-visible')) return;
+      agentBubble.hidden = true;
+    }, 180);
+  };
+
+  const showAgentBubble = async (askButton, markdownText, options = {}) => {
+    if (!askButton) return false;
+    const message = String(markdownText || '').trim();
+    if (!message) return false;
+    ensureAgentBubbleElement();
+    if (!agentBubble || !agentBubbleContent) return false;
+
+    const token = ++agentBubbleRenderToken;
+    const defaultDurationMs = parseDurationMs(
+      String((askButton.dataset && askButton.dataset.agentBubbleDurationMs) || ''),
+      AGENT_BUBBLE_DEFAULT_MS
+    );
+    const hasCustomDuration = options && Object.prototype.hasOwnProperty.call(options, 'durationMs');
+    const durationMs = hasCustomDuration
+      ? parseDurationMs(options.durationMs, defaultDurationMs)
+      : defaultDurationMs;
+    const persist = Boolean(options && options.persist);
+
+    if (token !== agentBubbleRenderToken || !agentBubbleContent || !agentBubble) return false;
+    await renderMarkdownInto(agentBubbleContent, message, { breaks: true });
+    if (token !== agentBubbleRenderToken || !agentBubbleContent || !agentBubble) return false;
+    agentBubbleContent.querySelectorAll('a').forEach((link) => {
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+    });
+
+    if (agentBubbleHideTimer) {
+      window.clearTimeout(agentBubbleHideTimer);
+      agentBubbleHideTimer = null;
+    }
+    agentBubble.hidden = false;
+    requestAnimationFrame(() => {
+      if (!agentBubble) return;
+      agentBubble.classList.add('is-visible');
+    });
+    if (!persist) {
+      agentBubbleHideTimer = window.setTimeout(() => {
+        hideAgentBubble();
+      }, durationMs);
+    }
+    return true;
+  };
+
+  const maybeShowSessionGreeting = async (askButton) => {
+    if (!askButton) return;
+    const currentPath = String((window.location && window.location.pathname) || '').trim();
+    if (currentPath === ASK_POPOUT_PATH) return;
+    if (document.body && document.body.classList.contains('ask-widget-popout-body')) return;
+    try {
+      const response = await fetch(ASK_SESSION_GREETING_ENDPOINT, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload || payload.ok !== true) return;
+      if (!payload.show) return;
+      const markdown = String(payload.markdown || '').trim();
+      if (!markdown) return;
+      const durationMs = parseDurationMs(payload.duration_ms, AGENT_BUBBLE_DEFAULT_MS);
+      await showAgentBubble(askButton, markdown, { durationMs });
+    } catch (error) {}
+  };
 
   const ensureXterm = () => {
     if (window.Terminal && window.FitAddon && window.FitAddon.FitAddon) {
@@ -465,7 +606,8 @@
   };
 
   const setupDraggableAskWidget = (widget) => {
-    if (window.matchMedia('(max-width: 767px)').matches) return () => {};
+    const mobileQuery = window.matchMedia('(max-width: 767px)');
+    if (mobileQuery.matches) return () => {};
     const header = widget.querySelector('.ask-terminal-widget__head');
     if (!header) return () => {};
 
@@ -474,6 +616,14 @@
     let startY = 0;
     let startLeft = 0;
     let startTop = 0;
+    let wasMobileViewport = mobileQuery.matches;
+
+    const clearInlinePosition = () => {
+      widget.style.left = '';
+      widget.style.top = '';
+      widget.style.right = '';
+      widget.style.bottom = '';
+    };
 
     const clampPosition = (left, top) => {
       const rect = widget.getBoundingClientRect();
@@ -515,6 +665,7 @@
     };
 
     const onPointerDown = (event) => {
+      if (mobileQuery.matches) return;
       if (event.button !== 0) return;
       if (event.target && event.target.closest('.ask-terminal-widget__close')) return;
       if (event.target && event.target.closest('.ask-terminal-widget__sudo')) return;
@@ -534,6 +685,18 @@
     };
 
     const keepInBounds = () => {
+      const isMobileViewport = mobileQuery.matches;
+      if (isMobileViewport) {
+        clearInlinePosition();
+        wasMobileViewport = true;
+        return;
+      }
+      if (wasMobileViewport !== isMobileViewport) {
+        clearInlinePosition();
+        wasMobileViewport = isMobileViewport;
+        return;
+      }
+      if (!widget.style.left && !widget.style.top) return;
       const rect = widget.getBoundingClientRect();
       const clamped = clampPosition(rect.left, rect.top);
       const moved = Math.abs(clamped.left - rect.left) > 0.5 || Math.abs(clamped.top - rect.top) > 0.5;
@@ -566,15 +729,18 @@
 
   const buildAskChatWidgetMarkup = ({ title, includeClose, includePopout }) => `
       <div class="ask-terminal-widget__head">
-        <strong>${escapeHtml(title || 'Ask Alshival')}</strong>
+        <span class="ask-terminal-widget__spacer" aria-hidden="true"></span>
         ${isStaff ? '<a href="#" class="ask-terminal-widget__sudo" aria-label="Open terminal hacker mode">Hacker Mode</a>' : ''}
+        <button type="button" class="ask-terminal-widget__clear" aria-label="Clear chat history" title="Clear chat history" data-ask-clear>
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16m-10 0V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2m-7 0l1 12a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-12M10 11v6m4-6v6"></path>
+          </svg>
+        </button>
         ${includePopout ? '<button type="button" class="ask-terminal-widget__popout" aria-label="Open chat in pop-out window" title="Open in pop-out window">Pop out</button>' : ''}
         ${includeClose ? '<button type="button" class="ask-terminal-widget__close" aria-label="Close chat">×</button>' : ''}
       </div>
       <div class="ask-terminal-widget__body ask-chat-widget">
-        <div class="ask-chat-widget__messages" aria-live="polite">
-          <div class="ask-chat-msg ask-chat-msg--assistant">How can I help?</div>
-        </div>
+        <div class="ask-chat-widget__messages" aria-live="polite"></div>
         <form class="ask-chat-widget__composer">
           <div class="resource-note-chat">
             <textarea
@@ -651,6 +817,7 @@
         onPopout();
       });
     }
+    const clearButton = widget.querySelector('[data-ask-clear]');
 
     const messagesEl = widget.querySelector('.ask-chat-widget__messages');
     const formEl = widget.querySelector('.ask-chat-widget__composer');
@@ -662,9 +829,11 @@
 
     let pending = false;
     let chatInitialized = false;
+    let historyLoaded = false;
     let voiceState = 'idle';
     let activeCall = null;
     let streamingBubble = null;
+    let streamingBubbleBody = null;
     let streamingText = '';
     let assistantLogged = false;
     const audioSink = document.createElement('audio');
@@ -697,14 +866,65 @@
     };
 
     const addMessage = (role, text) => {
+      const content = String(text || '').trim();
+      if (!content) return Promise.resolve(null);
       const node = document.createElement('div');
       node.className = `ask-chat-msg ${role === 'user' ? 'ask-chat-msg--user' : 'ask-chat-msg--assistant'}`;
-      node.textContent = String(text || '').trim();
+      const body = document.createElement('div');
+      body.className = 'ask-chat-msg__body alshival-markdown alshival-markdown--chat';
+      node.appendChild(body);
       messagesEl.appendChild(node);
       if (!chatInitialized) {
         messagesEl.scrollTop = 0;
         chatInitialized = true;
       }
+      const rendered = renderMarkdownInto(body, content, { breaks: true }).catch(() => {
+        body.textContent = content;
+      });
+      rendered.finally(() => {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      });
+      return rendered;
+    };
+
+    const loadChatHistory = async () => {
+      if (historyLoaded) return;
+      historyLoaded = true;
+      const fetchHistory = async () => {
+        const params = new URLSearchParams({ conversation_id: 'default', limit: '60' });
+        const response = await fetch(`${ASK_CHAT_HISTORY_ENDPOINT}?${params.toString()}`, {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.messages)) {
+          return [];
+        }
+        return payload.messages
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => ({
+            role: String(item.role || '').trim().toLowerCase(),
+            content: String(item.content || '').trim(),
+          }))
+          .filter((item) => (item.role === 'user' || item.role === 'assistant') && item.content);
+      };
+      try {
+        let history = await fetchHistory();
+        if (!history.length) {
+          await fetch(ASK_SESSION_GREETING_ENDPOINT, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          }).catch(() => {});
+          history = await fetchHistory();
+        }
+        if (!history.length) return;
+        messagesEl.innerHTML = '';
+        chatInitialized = false;
+        history.forEach((item) => addMessage(item.role, item.content));
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      } catch (error) {}
     };
 
     const getPageContextText = () => {
@@ -730,6 +950,7 @@
       try {
         await fetch(ASK_VOICE_LOG_ENDPOINT, {
           method: 'POST',
+          credentials: 'same-origin',
           headers: {
             'Content-Type': 'application/json',
             'X-CSRFToken': getCookie('csrftoken'),
@@ -737,7 +958,7 @@
           },
           body: JSON.stringify(payload),
         });
-      } catch (err) {}
+      } catch (error) {}
     };
 
     const updateActionButton = () => {
@@ -780,8 +1001,44 @@
     const setPending = (next) => {
       pending = Boolean(next);
       inputEl.disabled = pending || voiceState !== 'idle';
+      if (clearButton) clearButton.disabled = pending;
       updateActionButton();
     };
+
+    if (clearButton) {
+      clearButton.addEventListener('click', async (event) => {
+        event.preventDefault();
+        if (pending) return;
+        const confirmed = window.confirm('Clear this chat history? This cannot be undone.');
+        if (!confirmed) return;
+        setPending(true);
+        try {
+          const response = await fetch(ASK_CHAT_HISTORY_CLEAR_ENDPOINT, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({ conversation_id: 'default' }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload || payload.ok !== true) {
+            throw new Error(String(payload.error || 'request_failed'));
+          }
+          messagesEl.innerHTML = '';
+          chatInitialized = false;
+          historyLoaded = false;
+          await loadChatHistory();
+        } catch (error) {
+          addMessage('assistant', 'Unable to clear chat history right now.');
+        } finally {
+          setPending(false);
+          inputEl.focus();
+        }
+      });
+    }
 
     inputEl.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
@@ -852,6 +1109,7 @@
           try { audioSink.srcObject = null; } catch (err) {}
           activeCall = null;
           streamingBubble = null;
+          streamingBubbleBody = null;
           streamingText = '';
           assistantLogged = false;
           setVoiceState('idle');
@@ -886,6 +1144,7 @@
             if (!payload || typeof payload !== 'object') return;
             if (payload.type === 'response.created') {
               streamingBubble = null;
+              streamingBubbleBody = null;
               streamingText = '';
               assistantLogged = false;
               return;
@@ -894,20 +1153,28 @@
               if (!streamingBubble) {
                 streamingBubble = document.createElement('div');
                 streamingBubble.className = 'ask-chat-msg ask-chat-msg--assistant';
-                streamingBubble.textContent = '';
+                streamingBubbleBody = document.createElement('div');
+                streamingBubbleBody.className = 'ask-chat-msg__body alshival-markdown alshival-markdown--chat';
+                streamingBubble.appendChild(streamingBubbleBody);
                 messagesEl.appendChild(streamingBubble);
               }
               streamingText += String(payload.delta || '');
-              streamingBubble.textContent = streamingText;
+              if (streamingBubbleBody) {
+                streamingBubbleBody.textContent = streamingText;
+              }
               messagesEl.scrollTop = messagesEl.scrollHeight;
               return;
             }
             if (payload.type === 'response.audio_transcript.done') {
+              if (streamingBubbleBody && streamingText) {
+                renderMarkdownInto(streamingBubbleBody, streamingText, { breaks: true }).catch(() => {});
+              }
               if (!assistantLogged && streamingText) {
                 logVoiceMessage('assistant', streamingText);
                 assistantLogged = true;
               }
               streamingBubble = null;
+              streamingBubbleBody = null;
               streamingText = '';
               return;
             }
@@ -921,6 +1188,7 @@
               logVoiceMessage('assistant', combined);
               assistantLogged = true;
               streamingBubble = null;
+              streamingBubbleBody = null;
               streamingText = '';
               return;
             }
@@ -1021,6 +1289,7 @@
     });
 
     updateActionButton();
+    loadChatHistory().catch(() => {});
     if (autoFocus) {
       inputEl.focus();
     }
@@ -1263,8 +1532,29 @@
 
   const askButton = document.querySelector('.floating-ask-alshival');
   if (askButton) {
+    window.showAlshivalAgentBubble = (markdownText, options = {}) => showAgentBubble(askButton, markdownText, options);
+    window.hideAlshivalAgentBubble = () => {
+      hideAgentBubble();
+      return true;
+    };
+    window.AlshivalAgentBubble = {
+      show: window.showAlshivalAgentBubble,
+      hide: window.hideAlshivalAgentBubble,
+    };
+    window.addEventListener('alshival:agent-bubble', (event) => {
+      const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+      const markdown = String((detail && (detail.markdown || detail.message || '')) || '').trim();
+      if (!markdown) return;
+      window.showAlshivalAgentBubble(markdown, detail);
+    });
+
+    window.setTimeout(() => {
+      maybeShowSessionGreeting(askButton).catch(() => {});
+    }, 220);
+
     askButton.addEventListener('click', async (event) => {
       event.preventDefault();
+      hideAgentBubble();
       await window.openAskAlshivalWidget({ mode: 'chat', title: 'Ask Alshival' });
     });
   }

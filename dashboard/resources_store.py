@@ -2250,6 +2250,24 @@ def list_ask_chat_messages(user, *, conversation_id: str = "default", limit: int
     ]
 
 
+def clear_ask_chat_messages(user, *, conversation_id: str = "default") -> int:
+    resolved_conversation_id = str(conversation_id or "").strip() or "default"
+    conn = _connect(user)
+    try:
+        _ensure_schema(conn)
+        cursor = conn.execute(
+            """
+            DELETE FROM ask_chat_messages
+            WHERE conversation_id = ?
+            """,
+            (resolved_conversation_id,),
+        )
+        conn.commit()
+        return int(cursor.rowcount or 0)
+    finally:
+        conn.close()
+
+
 def _ensure_ask_chat_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """

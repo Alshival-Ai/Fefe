@@ -8,7 +8,7 @@
   <section class="auth-card auth-card-split">
     <div class="auth-panel">
       <div class="auth-brand">
-        <img class="auth-brand__img" src="{% static 'img/branding/alshival-logo-469x317.png' %}" alt="Alshival wordmark" />
+        <img class="auth-brand__img" src="{% static 'img/branding/alshival-logo-276x186.png' %}" alt="Alshival wordmark" />
       </div>
       <h1>Hi, I'm Alshival!</h1>
       <p>I am here to help your team monitor resources, use GitHub and infrastructure context to answer questions, integrate with your systems, query databases, and provide hands-on developer support.</p>
@@ -184,7 +184,10 @@
                 <ul>
                   <li><code>read:user</code></li>
                   <li><code>user:email</code></li>
+                  <li><code>read:org</code></li>
+                  <li><code>repo</code></li>
                 </ul>
+                <p><code>repo</code> is required for GitHub wiki read/write sync.</p>
               </div>
               <div class="connector-support">
                 <p>Set up a GitHub OAuth App, paste the credentials, and test sign-in with your work GitHub account.</p>

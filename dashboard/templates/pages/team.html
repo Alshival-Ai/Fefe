@@ -383,6 +383,27 @@
               <span>Notes</span>
               <textarea name="notes" rows="3" placeholder="Optional context"></textarea>
             </label>
+            <label>
+              <span>GitHub repositories</span>
+              <select name="github_repositories" multiple size="6">
+                {% for repo in github_repo_options %}
+                <option value="{{ repo.full_name|escape }}">
+                  {{ repo.full_name }}{% if repo.private %} (Private){% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>GitHub repositories (manual)</span>
+              <textarea
+                name="github_repositories_manual"
+                rows="2"
+                placeholder="org/repo-one, org/repo-two"></textarea>
+            </label>
+            <div class="text-muted small">Use manual entries when org repos are not listed yet.</div>
+            {% if github_repo_error %}
+            <div class="text-muted small">{{ github_repo_error }}</div>
+            {% endif %}
             <input type="hidden" name="resource_scope" value="team">
             <input type="hidden" name="force_team_scope" value="1">
             <input type="hidden" name="team_id" data-team-add-resource-team-id value="{{ team_memberships.0.id }}">
@@ -548,6 +569,24 @@
       }
       const precision = scaled >= 10 || unitIndex === 0 ? 0 : 1;
       return `${scaled.toFixed(precision)} ${units[unitIndex]}`;
+    };
+
+    const renderMarkdownInto = (target, markdownText) => {
+      if (!target) return Promise.resolve('');
+      const source = String(markdownText || '').trim();
+      if (!source) {
+        target.innerHTML = '';
+        return Promise.resolve('');
+      }
+      const markdown = window.AlshivalMarkdown;
+      if (markdown && typeof markdown.renderInto === 'function') {
+        return markdown.renderInto(target, source, { breaks: true }).catch(() => {
+          target.textContent = source;
+          return '';
+        });
+      }
+      target.textContent = source;
+      return Promise.resolve('');
     };
 
     const selectedFile = () => (fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null);
@@ -947,10 +986,10 @@
 
           const content = String(item.content || '').trim();
           if (content) {
-            const body = document.createElement('p');
-            body.className = 'team-chat-msg__body';
-            body.textContent = content;
+            const body = document.createElement('div');
+            body.className = 'team-chat-msg__body alshival-markdown alshival-markdown--chat';
             row.appendChild(body);
+            renderMarkdownInto(body, content).catch(() => {});
           }
 
           const attachmentUrl = String(item.attachment_url || '').trim();

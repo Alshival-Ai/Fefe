@@ -24,6 +24,17 @@
             <span class="wiki-tree-node__count">3</span>
           </summary>
           <div class="wiki-tree-node__children">
+            <a
+              class="wiki-tree-page{% if not active_team_slug %} is-active{% endif %}"
+              href="{% url 'resources' %}"
+              data-team-folder="all"
+              data-team-label="All Resources">
+              <span class="folder-icon" aria-hidden="true">PG</span>
+              <span class="wiki-sidebar-page-copy">
+                <strong>All Resources</strong>
+                <small>Show every scope</small>
+              </span>
+            </a>
             <details class="wiki-tree-node wiki-tree-node--folder" open>
               <summary class="wiki-tree-node__summary">
                 <span class="folder-icon" aria-hidden="true">DIR</span>
@@ -54,7 +65,13 @@
                 <details class="wiki-tree-node wiki-tree-node--folder" open>
                   <summary class="wiki-tree-node__summary">
                     <span class="folder-icon" aria-hidden="true">DIR</span>
-                    <span class="wiki-tree-node__label">{{ team.name }}</span>
+                    <a
+                      class="wiki-tree-node__label{% if team.is_active %} is-active{% endif %}"
+                      href="{% url 'resources' %}?team={{ team.slug }}"
+                      data-team-folder="{{ team.slug }}"
+                      data-team-label="{{ team.name }}">
+                      {{ team.name }}
+                    </a>
                     <span class="wiki-tree-node__count">{{ team.resources|length }}</span>
                   </summary>
                   <div class="wiki-tree-node__children">
@@ -106,70 +123,17 @@
   </aside>
 
   <div class="resources-main">
-    <div class="team-filter-banner">
+    <div
+      class="team-filter-banner"
+      data-team-filter-banner
+      data-active-team-folder="{{ active_team_slug|default:'all' }}"
+      data-active-team-label="{{ active_team_label }}">
       <span class="text-muted small">Viewing</span>
-      <strong data-team-view-label>All Resources</strong>
+      <strong data-team-view-label>{{ active_team_label }}</strong>
+      {% if active_team_slug %}
+      <a class="ghost-btn" href="{% url 'resources' %}">Clear filter</a>
+      {% endif %}
     </div>
-
-    <section class="grid">
-      <article class="card">
-        <h3>API endpoints</h3>
-        {% if resource_insights.api_total %}
-          <p>
-            {{ resource_insights.api_healthy }} healthy,
-            {{ resource_insights.api_degraded }} degraded,
-            {{ resource_insights.api_down }} down right now.
-          </p>
-          <div class="tag-row">
-            <span class="tag">{{ resource_insights.api_total }} tracked</span>
-            <span class="tag">{{ resource_insights.api_with_healthcheck }} with health URLs</span>
-            {% if resource_insights.api_latency_avg_ms is not None %}
-              <span class="tag">{{ resource_insights.api_latency_avg_ms|floatformat:1 }} ms avg latency</span>
-            {% else %}
-              <span class="tag">No latency samples in {{ resource_insights.window_days }}d</span>
-            {% endif %}
-            {% if resource_insights.api_top_unstable_name %}
-              <span class="tag">
-                {{ resource_insights.api_top_unstable_name }}: {{ resource_insights.api_top_unstable_failures }} failed checks
-              </span>
-            {% endif %}
-          </div>
-        {% else %}
-          <p>No API endpoints are registered yet.</p>
-          <div class="tag-row">
-            <span class="tag">Add API resources to start monitoring</span>
-          </div>
-        {% endif %}
-      </article>
-      <article class="card card-wide">
-        <h3>Service uptime</h3>
-        <div class="metric">
-          <span class="metric-value">
-            {% if resource_insights.uptime_pct is not None %}
-              {{ resource_insights.uptime_pct|floatformat:1 }}%
-            {% else %}
-              —
-            {% endif %}
-          </span>
-          <span class="metric-label">
-            {% if resource_insights.uptime_checks_total %}
-              {{ resource_insights.uptime_checks_healthy }} / {{ resource_insights.uptime_checks_total }}
-              checks healthy in the last {{ resource_insights.window_days }} days
-            {% else %}
-              No health checks recorded in the last {{ resource_insights.window_days }} days
-            {% endif %}
-          </span>
-        </div>
-        <div class="progress">
-          <span style="width: {{ resource_insights.uptime_progress_pct }}%"></span>
-        </div>
-        <div class="hero-meta">
-          <span>{{ resource_insights.uptime_resources_covered }} resources sampled</span>
-          <span>{{ resource_insights.uptime_checks_unhealthy }} unhealthy checks</span>
-          <span>Latest check: {{ resource_insights.uptime_latest_check_display }}</span>
-        </div>
-      </article>
-    </section>
 
     <section class="table-wrap">
       <div class="table-header">
@@ -246,6 +210,7 @@
                   data-resource-db-type="{{ item.db_type|escape }}"
                   data-resource-healthcheck-url="{{ item.healthcheck_url|escape }}"
                   data-resource-notes="{{ item.notes|escape }}"
+                  data-resource-github-repos="{% for repo_name in item.github_repositories %}{% if not forloop.first %},{% endif %}{{ repo_name|escape }}{% endfor %}"
                   data-resource-scope="{{ item.access_scope }}"
                   data-resource-team-names="{% for team_name in item.team_names %}{% if not forloop.first %},{% endif %}{{ team_name|escape }}{% endfor %}"
                   data-resource-ssh-key-name="{{ item.ssh_key_name|escape }}"
@@ -287,7 +252,12 @@
     <div class="alerts-list">
       {% if resource_alerts %}
         {% for alert in resource_alerts %}
-        <a class="alert-item alert-item-{{ alert.tone }}" href="{{ alert.detail_url }}">
+        <a
+          class="alert-item alert-item-{{ alert.tone }}"
+          href="{{ alert.detail_url }}"
+          data-alert-item
+          data-alert-scope="{{ alert.access_scope }}"
+          data-alert-teams="{% for team_name in alert.team_names %}{% if not forloop.first %}|{% endif %}{{ team_name|lower|slugify }}{% endfor %}">
           <span class="alert-dot" aria-hidden="true"></span>
           <div class="alert-main">
             <div class="alert-top">
@@ -305,6 +275,10 @@
         <div class="text-muted small">Health alerts will appear here when checks fail or become unknown.</div>
       </div>
       {% endif %}
+      <div class="alert-empty d-none" data-alert-empty-filter>
+        <div class="alert-empty-title">No alerts for this team</div>
+        <div class="text-muted small">This team currently has no unhealthy or unknown resources.</div>
+      </div>
     </div>
   </article>
 
@@ -559,6 +533,27 @@
         <textarea name="notes" rows="3" placeholder="Optional context"></textarea>
       </label>
       <label>
+        <span>GitHub repositories</span>
+        <select name="github_repositories" multiple size="6">
+          {% for repo in github_repo_options %}
+          <option value="{{ repo.full_name|escape }}">
+            {{ repo.full_name }}{% if repo.private %} (Private){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>GitHub repositories (manual)</span>
+        <textarea
+          name="github_repositories_manual"
+          rows="2"
+          placeholder="org/repo-one, org/repo-two"></textarea>
+      </label>
+      <div class="text-muted small">Use manual entries when org repos are not listed yet.</div>
+      {% if github_repo_error %}
+      <div class="text-muted small">{{ github_repo_error }}</div>
+      {% endif %}
+      <label>
         <span>Access scope</span>
         <select name="resource_scope">
           <option value="account">Account</option>
@@ -725,6 +720,27 @@
         <textarea name="notes" rows="3"></textarea>
       </label>
       <label>
+        <span>GitHub repositories</span>
+        <select name="github_repositories" multiple size="6">
+          {% for repo in github_repo_options %}
+          <option value="{{ repo.full_name|escape }}">
+            {{ repo.full_name }}{% if repo.private %} (Private){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>GitHub repositories (manual)</span>
+        <textarea
+          name="github_repositories_manual"
+          rows="2"
+          placeholder="org/repo-one, org/repo-two"></textarea>
+      </label>
+      <div class="text-muted small">Use manual entries when org repos are not listed yet.</div>
+      {% if github_repo_error %}
+      <div class="text-muted small">{{ github_repo_error }}</div>
+      {% endif %}
+      <label>
         <span>Access scope</span>
         <select name="resource_scope">
           <option value="account">Account</option>
@@ -759,10 +775,14 @@
     const sshLibraryForm = document.querySelector('[data-ssh-library-form]');
     const healthButtons = document.querySelectorAll('[data-health-check]');
     const teamFolderButtons = document.querySelectorAll('[data-team-folder]');
+    const teamFilterBanner = document.querySelector('[data-team-filter-banner]');
     const teamViewLabel = document.querySelector('[data-team-view-label]');
     const resourceFilterNote = document.querySelector('[data-resource-filter-note]');
     const resourceRows = document.querySelectorAll('[data-resource-row]');
     const resourceEmptyFilter = document.querySelector('[data-resource-empty-filter]');
+    const alertItems = document.querySelectorAll('[data-alert-item]');
+    const alertEmptyFilter = document.querySelector('[data-alert-empty-filter]');
+    const alertsCount = document.querySelector('.alerts-count');
     const sshRows = document.querySelectorAll('[data-ssh-row]');
     const sshEmptyFilterRow = document.querySelector('[data-ssh-empty-filter]');
     const updateTypeVisibility = (form) => {
@@ -915,6 +935,29 @@
       if (!showTeam) {
         Array.from(teamSelect.options).forEach((option) => { option.selected = false; });
       }
+    };
+    const parseRepoNames = (rawValue) => String(rawValue || '')
+      .split(',')
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const applyGithubRepoSelection = (selectEl, repoNames) => {
+      if (!selectEl) return;
+      const normalized = Array.isArray(repoNames)
+        ? repoNames.map((value) => String(value || '').trim()).filter(Boolean)
+        : [];
+      const selectedSet = new Set(normalized);
+      const known = new Set(Array.from(selectEl.options).map((option) => String(option.value || '').trim()));
+      normalized.forEach((repoName) => {
+        if (known.has(repoName)) return;
+        const option = document.createElement('option');
+        option.value = repoName;
+        option.textContent = `${repoName} (Saved)`;
+        selectEl.appendChild(option);
+        known.add(repoName);
+      });
+      Array.from(selectEl.options).forEach((option) => {
+        option.selected = selectedSet.has(String(option.value || '').trim());
+      });
     };
 
     document.querySelectorAll('.modal-form').forEach((form) => {
@@ -1072,6 +1115,7 @@
           }
           editForm.querySelector('textarea[name="notes"]').value = button.getAttribute('data-resource-notes') || '';
           const sshKeyName = button.getAttribute('data-resource-ssh-key-name') || '';
+          const githubRepoNames = parseRepoNames(button.getAttribute('data-resource-github-repos') || '');
           const resourceScope = button.getAttribute('data-resource-scope') || 'account';
           const resourceTeamNames = (button.getAttribute('data-resource-team-names') || '')
             .split(',')
@@ -1094,6 +1138,8 @@
           const clearKeyInput = editForm.querySelector('input[name="clear_ssh_key"]');
           const resourceScopeSelect = editForm.querySelector('select[name="resource_scope"]');
           const resourceTeamSelect = editForm.querySelector('select[name="resource_team_names"]');
+          const githubRepoSelect = editForm.querySelector('select[name="github_repositories"]');
+          const githubRepoManualInput = editForm.querySelector('textarea[name="github_repositories_manual"]');
           if (sshKeyNameInput) sshKeyNameInput.value = sshKeyName;
           if (resourceScopeSelect) resourceScopeSelect.value = resourceScope;
           if (resourceTeamSelect) {
@@ -1101,6 +1147,8 @@
               option.selected = resourceTeamNames.includes(option.value);
             });
           }
+          applyGithubRepoSelection(githubRepoSelect, githubRepoNames);
+          if (githubRepoManualInput) githubRepoManualInput.value = githubRepoNames.join('\n');
           if (sshUsernameInput) sshUsernameInput.value = sshUsername;
           if (sshPortInput) sshPortInput.value = sshPort || '22';
           if (sshScopeSelect) {
@@ -1127,6 +1175,10 @@
           if (addForm) {
             const resourceScopeSelect = addForm.querySelector('select[name="resource_scope"]');
             if (resourceScopeSelect) resourceScopeSelect.value = 'account';
+            const githubRepoSelect = addForm.querySelector('select[name="github_repositories"]');
+            const githubRepoManualInput = addForm.querySelector('textarea[name="github_repositories_manual"]');
+            applyGithubRepoSelection(githubRepoSelect, []);
+            if (githubRepoManualInput) githubRepoManualInput.value = '';
             updateResourceScopeField(addForm);
           }
         }
@@ -1233,6 +1285,31 @@
         const showResourceEmpty = normalized !== 'all' && visibleResourceRows === 0;
         resourceEmptyFilter.classList.toggle('d-none', !showResourceEmpty);
       }
+      let visibleAlertItems = 0;
+      alertItems.forEach((item) => {
+        const alertScope = item.getAttribute('data-alert-scope') || 'account';
+        const alertTeams = (item.getAttribute('data-alert-teams') || '')
+          .split('|')
+          .map((value) => value.trim())
+          .filter(Boolean);
+        let show = false;
+        if (normalized === 'all') {
+          show = true;
+        } else if (normalized === 'mine') {
+          show = alertScope === 'account';
+        } else {
+          show = alertScope === 'team' && alertTeams.includes(normalized);
+        }
+        item.classList.toggle('d-none', !show);
+        if (show) visibleAlertItems += 1;
+      });
+      if (alertsCount && alertItems.length > 0) {
+        alertsCount.textContent = String(visibleAlertItems);
+      }
+      if (alertEmptyFilter && alertItems.length > 0) {
+        const showAlertEmpty = normalized !== 'all' && visibleAlertItems === 0;
+        alertEmptyFilter.classList.toggle('d-none', !showAlertEmpty);
+      }
       let visibleSshRows = 0;
       sshRows.forEach((row) => {
         const rowScope = row.getAttribute('data-ssh-scope') || 'account';
@@ -1257,7 +1334,9 @@
         applyTeamFolder(teamKey, teamLabel);
       });
     });
-    applyTeamFolder('all', 'All Resources');
+    const initialTeamKey = String(teamFilterBanner?.getAttribute('data-active-team-folder') || 'all').trim().toLowerCase() || 'all';
+    const initialTeamLabel = String(teamFilterBanner?.getAttribute('data-active-team-label') || teamViewLabel?.textContent || 'All Resources').trim() || 'All Resources';
+    applyTeamFolder(initialTeamKey, initialTeamLabel);
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('add') === '1') {

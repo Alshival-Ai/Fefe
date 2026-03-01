@@ -31,6 +31,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils.crypto import get_random_string
@@ -76,6 +77,7 @@ from .resources_store import (
     add_resource,
     add_resource_note,
     add_ssh_credential,
+    clear_ask_chat_messages,
     clear_user_notifications,
     create_account_api_key,
     create_reminder,
@@ -133,6 +135,7 @@ from .resources_store import (
     update_resource,
 )
 from .calendar_sync_service import refresh_calendar_cache_for_user
+from .github_wiki_sync_service import sync_resource_wiki_with_github
 from .support_inbox import send_support_inbox_email
 
 
@@ -207,13 +210,7 @@ _TEAM_DIRECTORY_STATUS = {
 }
 
 _GITHUB_USERNAME_RE = re.compile(r"^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)$")
-_TEAM_DIRECTORY_FEATURES = [
-    {
-        "key": "codex",
-        "label": "Codex",
-        "description": "Access Codex workflows and assisted development tools.",
-    },
-]
+_TEAM_DIRECTORY_FEATURES: list[dict[str, str]] = []
 _INVITE_SIGNUP_METHODS = [
     {
         "key": "local",
@@ -248,6 +245,10 @@ _WIKI_STATUS = {
     "wiki_page_published": ("Wiki page published.", "success"),
     "wiki_draft_saved": ("Draft saved.", "success"),
     "wiki_page_deleted": ("Wiki page deleted.", "success"),
+    "wiki_sync_completed": ("Wiki sync completed.", "success"),
+    "wiki_sync_partial": ("Wiki sync completed with warnings.", "warning"),
+    "wiki_sync_failed": ("Wiki sync failed.", "danger"),
+    "wiki_sync_unavailable": ("Wiki sync is not available for this resource.", "warning"),
     "wiki_title_required": ("Add a markdown # title before saving.", "warning"),
     "wiki_path_required": ("Path is required.", "warning"),
     "wiki_path_invalid": ("Path is invalid. Use letters, numbers, and dashes with optional / folders.", "warning"),
@@ -420,6 +421,14 @@ def _invite_expiry_datetime() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=_INVITE_TOKEN_MAX_AGE_DAYS)
 
 
+def _format_invite_datetime_long(value: datetime) -> str:
+    resolved = value
+    if resolved.tzinfo is None:
+        resolved = resolved.replace(tzinfo=timezone.utc)
+    local_value = resolved.astimezone()
+    return local_value.strftime("%A, %B %d, %Y %H:%M:%S %Z")
+
+
 def _invite_absolute_url(request, token: str) -> str:
     return request.build_absolute_uri(reverse("accept_user_invite", kwargs={"token": token}))
 
@@ -501,132 +510,6 @@ def _plain_text_to_email_html_fragment(value: str) -> str:
     )
 
 
-def _absolute_invite_related_url(invite_url: str, target_url: str) -> str:
-    candidate = str(target_url or "").strip()
-    if not candidate:
-        return ""
-    lowered = candidate.lower()
-    if lowered.startswith("http://") or lowered.startswith("https://"):
-        return candidate
-    invite_split = urlsplit(str(invite_url or "").strip())
-    target_split = urlsplit(candidate)
-    if not (invite_split.scheme and invite_split.netloc):
-        return candidate
-    resolved_path = str(target_split.path or "").strip() or "/"
-    if not resolved_path.startswith("/"):
-        resolved_path = f"/{resolved_path}"
-    return urlunsplit(
-        (
-            invite_split.scheme,
-            invite_split.netloc,
-            resolved_path,
-            str(target_split.query or "").strip(),
-            str(target_split.fragment or "").strip(),
-        )
-    )
-
-
-def _invite_email_signup_option_links(
-    *,
-    invite_token: str,
-    invite_url: str,
-    signup_methods: list[str],
-    invited_email: str,
-) -> list[dict[str, str]]:
-    methods = _normalize_invite_signup_methods(signup_methods, fallback_to_local=False)
-    if not methods:
-        methods = _normalize_invite_signup_methods(["local"], fallback_to_local=True)
-    complete_path = reverse("complete_user_invite", kwargs={"token": invite_token})
-    options: list[dict[str, str]] = []
-
-    if "local" in methods:
-        local_login_url = f"{reverse('account_login')}?{urlencode({'next': complete_path})}"
-        signup_params = {"next": complete_path}
-        normalized_email = str(invited_email or "").strip().lower()
-        if normalized_email:
-            signup_params["email"] = normalized_email
-        local_signup_url = f"{reverse('account_signup')}?{urlencode(signup_params)}"
-        options.append(
-            {
-                "label": "Email Sign In",
-                "url": _absolute_invite_related_url(invite_url, local_login_url),
-            }
-        )
-        options.append(
-            {
-                "label": "Create Local Account",
-                "url": _absolute_invite_related_url(invite_url, local_signup_url),
-            }
-        )
-
-    for method in methods:
-        if method == "local":
-            continue
-        login_base = _social_login_path(method)
-        login_url = f"{login_base}?{urlencode({'process': 'login', 'next': complete_path})}"
-        options.append(
-            {
-                "label": f"Continue with {_invite_method_label(method)}",
-                "url": _absolute_invite_related_url(invite_url, login_url),
-            }
-        )
-    return options
-
-
-def _invite_email_signup_footer_text(*, invite_url: str, option_links: list[dict[str, str]]) -> str:
-    lines = ["Additional sign-up options:"]
-    resolved_invite_url = str(invite_url or "").strip()
-    if resolved_invite_url:
-        lines.append(f"- Open Invitation: {resolved_invite_url}")
-    for item in option_links:
-        label = str(item.get("label") or "").strip()
-        link = str(item.get("url") or "").strip()
-        if not (label and link):
-            continue
-        lines.append(f"- {label}: {link}")
-    return "\n".join(lines).strip()
-
-
-def _invite_email_signup_footer_html(*, invite_url: str, option_links: list[dict[str, str]]) -> str:
-    buttons: list[str] = []
-    resolved_invite_url = str(invite_url or "").strip()
-    if resolved_invite_url:
-        safe_invite_url = html.escape(resolved_invite_url, quote=True)
-        buttons.append(
-            (
-                f'<a href="{safe_invite_url}" '
-                'style="display:inline-block;margin:0 10px 10px 0;padding:10px 16px;'
-                'background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;'
-                'font-weight:600;font-size:14px;">Open Invitation</a>'
-            )
-        )
-    for item in option_links:
-        label = str(item.get("label") or "").strip()
-        link = str(item.get("url") or "").strip()
-        if not (label and link):
-            continue
-        safe_label = html.escape(label)
-        safe_link = html.escape(link, quote=True)
-        buttons.append(
-            (
-                f'<a href="{safe_link}" '
-                'style="display:inline-block;margin:0 10px 10px 0;padding:10px 16px;'
-                'background:#e2e8f0;color:#0f172a;text-decoration:none;border-radius:8px;'
-                'font-weight:600;font-size:14px;border:1px solid #cbd5e1;">'
-                f"{safe_label}</a>"
-            )
-        )
-    if not buttons:
-        return ""
-    return (
-        '<div style="margin-top:18px;padding-top:18px;border-top:1px solid #e2e8f0;">'
-        '<p style="margin:0 0 10px;font-size:13px;line-height:1.5;color:#475569;'
-        'font-weight:600;">Additional sign-up options</p>'
-        f"{''.join(buttons)}"
-        "</div>"
-    )
-
-
 def _decorate_invite_email_message(
     *,
     message: str,
@@ -637,23 +520,12 @@ def _decorate_invite_email_message(
 ) -> tuple[str, str]:
     base_message = str(message or "").strip()
     base_is_html = _looks_like_html(base_message)
-    option_links = _invite_email_signup_option_links(
-        invite_token=invite_token,
-        invite_url=invite_url,
-        signup_methods=signup_methods,
-        invited_email=invited_email,
-    )
 
     base_text = _html_to_text_for_email(base_message) if base_is_html else base_message
-    footer_text = _invite_email_signup_footer_text(invite_url=invite_url, option_links=option_links)
-    if footer_text:
-        resolved_text = f"{base_text}\n\n{footer_text}".strip() if base_text else footer_text
-    else:
-        resolved_text = base_text
+    resolved_text = base_text
 
     base_html = base_message if base_is_html else _plain_text_to_email_html_fragment(base_text)
-    footer_html = _invite_email_signup_footer_html(invite_url=invite_url, option_links=option_links)
-    resolved_html = f"{base_html}\n{footer_html}".strip() if footer_html else str(base_html or "").strip()
+    resolved_html = str(base_html or "").strip()
     return resolved_text, resolved_html
 
 
@@ -1199,7 +1071,9 @@ def _generate_invite_delivery_message_with_agent(
 
     creator_profile = _invite_creator_profile_context(actor)
     actor_username = str(getattr(actor, "username", "") or "").strip()
+    current_datetime_long = _format_invite_datetime_long(datetime.now(timezone.utc))
     context_payload = {
+        "current_datetime_long": current_datetime_long,
         "delivery_channel": str(invite_channel or "").strip().lower(),
         "invited_username": invited_username,
         "invited_email": invited_email,
@@ -1239,8 +1113,9 @@ def _generate_invite_delivery_message_with_agent(
                     style_rule,
                     "Always include invite URL, allowed sign-in methods, and invite expiry.",
                     "For email invites, include a primary Open Invitation button using invite_url.",
-                    "For email invites, add a bottom section titled Additional sign-up options with one button-style link per allowed sign-in method.",
                     "Use inviter identity context to identify who created the invite and how the recipient can follow up with them.",
+                    "Use current_datetime_long as the current timestamp reference if you mention timing.",
+                    "Use invite_expires as an absolute expiration datetime and never describe it as expiring immediately when sent.",
                     "If an invite note is provided, include it explicitly in the message.",
                     "Explicitly tell the recipient that Alshival personally decorated this welcome invitation.",
                     "If resource tools are available, call at least one tool and mention one factual resource health/log detail when useful.",
@@ -1648,13 +1523,7 @@ def _resolve_wiki_scope_context(
                     options_lookup=resource_lookup,
                 )
     if scope == _WIKI_SCOPE_TEAM:
-        if not team_id:
-            if team_options:
-                team_id = team_options[0]["team_id"]
-            else:
-                status_code = "wiki_team_required"
-                scope = _WIKI_SCOPE_WORKSPACE
-        if scope == _WIKI_SCOPE_TEAM and team_id:
+        if team_id:
             if not _user_can_access_team(actor=actor, team_id=team_id):
                 status_code = "wiki_team_no_access"
                 scope = _WIKI_SCOPE_WORKSPACE
@@ -1702,6 +1571,46 @@ def _wiki_accessible_queryset(user, *, scope: str, resource_uuid: str = "", team
         raw_resource_uuid=resource_uuid,
         raw_team_id=team_id,
     )
+    if resolved_scope == _WIKI_SCOPE_TEAM:
+        if user.is_superuser:
+            if resolved_team_id:
+                team_ids = [int(resolved_team_id)]
+            else:
+                team_ids = list(Group.objects.order_by("id").values_list("id", flat=True))
+        else:
+            team_ids = list(user.groups.order_by("id").values_list("id", flat=True))
+            if resolved_team_id:
+                if int(resolved_team_id) not in team_ids:
+                    return WikiPage.objects.none()
+                team_ids = [int(resolved_team_id)]
+
+        resource_uuids: list[str] = []
+        if team_ids:
+            resource_uuids = [
+                _normalize_resource_uuid(value)
+                for value in ResourceTeamShare.objects.filter(team_id__in=team_ids)
+                .values_list("resource_uuid", flat=True)
+                .distinct()
+            ]
+            resource_uuids = [value for value in resource_uuids if value]
+
+        team_scope_keys = [str(team_id) for team_id in team_ids]
+        scope_filter = Q(scope=_WIKI_SCOPE_TEAM, resource_uuid__in=team_scope_keys)
+        if resource_uuids:
+            scope_filter |= Q(scope=_WIKI_SCOPE_RESOURCE, resource_uuid__in=resource_uuids)
+        qs = WikiPage.objects.filter(scope_filter).prefetch_related("team_access")
+        if user.is_superuser:
+            return qs.distinct()
+
+        draft_filter = Q(is_draft=True, created_by_id=user.id)
+        published_filter = Q(is_draft=False)
+        if not team_ids:
+            return qs.filter(draft_filter).distinct()
+        return qs.filter(
+            draft_filter
+            | (published_filter & (Q(team_access__isnull=True) | Q(team_access__id__in=team_ids)))
+        ).distinct()
+
     scope_key = ""
     if resolved_scope == _WIKI_SCOPE_RESOURCE:
         scope_key = resolved_resource_uuid
@@ -2546,8 +2455,83 @@ def superuser_required(view_func):
     return _wrapped
 
 
-def _resource_metadata_from_request(request) -> dict[str, str]:
-    metadata: dict[str, str] = {}
+_GITHUB_REPOSITORY_FULL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def _normalize_github_repository_full_name(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        parsed = urlsplit(raw)
+        parts = [segment for segment in str(parsed.path or "").split("/") if segment]
+        if len(parts) >= 2:
+            raw = f"{parts[0]}/{parts[1]}"
+        else:
+            raw = ""
+    elif lowered.startswith("github.com/"):
+        raw = raw[len("github.com/"):]
+    raw = raw.strip().strip("/")
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    if not raw:
+        return ""
+    parts = [segment for segment in raw.split("/") if segment]
+    if len(parts) >= 2:
+        raw = f"{parts[0]}/{parts[1]}"
+    if not _GITHUB_REPOSITORY_FULL_NAME_RE.match(raw):
+        return ""
+    return raw
+
+
+def _normalize_resource_github_repositories(raw_value: object) -> list[str]:
+    if raw_value is None:
+        return []
+    values: list[object] = []
+    if isinstance(raw_value, str):
+        candidate = str(raw_value or "").strip()
+        if candidate:
+            values = [piece for piece in candidate.split(",")]
+    elif isinstance(raw_value, dict):
+        values = [raw_value]
+    elif isinstance(raw_value, (list, tuple, set)):
+        values = list(raw_value)
+    else:
+        values = [raw_value]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if isinstance(item, dict):
+            candidate = (
+                item.get("full_name")
+                or item.get("repo")
+                or item.get("repository")
+                or item.get("name")
+                or ""
+            )
+            candidate_values = [candidate]
+        else:
+            candidate_values = re.split(r"[,\n]+", str(item or ""))
+        for candidate in candidate_values:
+            full_name = _normalize_github_repository_full_name(candidate)
+            if not full_name:
+                continue
+            dedupe_key = full_name.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            normalized.append(full_name)
+            if len(normalized) >= 50:
+                break
+        if len(normalized) >= 50:
+            break
+    return normalized
+
+
+def _resource_metadata_from_request(request) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
     for key, value in request.POST.items():
         if not key.startswith("meta_"):
             continue
@@ -2555,6 +2539,13 @@ def _resource_metadata_from_request(request) -> dict[str, str]:
         if not resolved:
             continue
         metadata[key.removeprefix("meta_")] = resolved
+    github_repo_values = request.POST.getlist("github_repositories")
+    github_repo_manual = str(request.POST.get("github_repositories_manual") or "").strip()
+    if github_repo_manual:
+        github_repo_values.append(github_repo_manual)
+    github_repositories = _normalize_resource_github_repositories(github_repo_values)
+    if github_repositories:
+        metadata["github_repositories"] = github_repositories
     return metadata
 
 
@@ -2631,8 +2622,8 @@ def _normalize_cloud_logs(logs: list[dict]) -> list[dict]:
     return normalized
 
 
-def _resource_alerts(resources) -> list[dict[str, str | int]]:
-    alerts: list[dict[str, str | int]] = []
+def _resource_alerts(resources) -> list[dict[str, object]]:
+    alerts: list[dict[str, object]] = []
     for item in resources:
         status = (item.last_status or '').strip().lower()
         if status == 'unhealthy':
@@ -2651,6 +2642,8 @@ def _resource_alerts(resources) -> list[dict[str, str | int]]:
             {
                 'resource_id': item.id,
                 'resource_uuid': item.resource_uuid,
+                'access_scope': str(getattr(item, 'access_scope', '') or '').strip().lower() or 'account',
+                'team_names': list(getattr(item, 'team_names', []) or []),
                 'tone': tone,
                 'label': label,
                 'title': title,
@@ -2888,6 +2881,12 @@ _MICROSOFT_CONNECTOR_SCOPES = [
     "Calendars.Read",
     "Mail.Read",
     "Mail.Send",
+]
+_GITHUB_CONNECTOR_SCOPES = [
+    "read:user",
+    "user:email",
+    "read:org",
+    "repo",
 ]
 
 
@@ -5067,6 +5066,7 @@ def _resource_route_name(route_kind: str, endpoint_key: str) -> str:
         "wiki_create_page": "resource_wiki_create_page",
         "wiki_update_page": "resource_wiki_update_page",
         "wiki_delete_page": "resource_wiki_delete_page",
+        "wiki_sync": "resource_wiki_sync",
         "check": "check_resource_health_detail",
         "ping_stream": "resource_ping_stream",
         "notes_add": "resource_note_add",
@@ -5084,6 +5084,7 @@ def _resource_route_name(route_kind: str, endpoint_key: str) -> str:
         "wiki_create_page": "team_resource_wiki_create_page",
         "wiki_update_page": "team_resource_wiki_update_page",
         "wiki_delete_page": "team_resource_wiki_delete_page",
+        "wiki_sync": "team_resource_wiki_sync",
         "check": "team_check_resource_health_detail",
         "ping_stream": "team_resource_ping_stream",
         "notes_add": "team_resource_note_add",
@@ -5353,6 +5354,25 @@ def _redirect_resource_wiki_editor_new(
     )
 
 
+def _resource_wiki_sync_result_message(result: dict[str, object]) -> str:
+    repository = str(result.get("repository") or "").strip()
+    pull = result.get("pull") if isinstance(result.get("pull"), dict) else {}
+    push = result.get("push") if isinstance(result.get("push"), dict) else {}
+
+    pull_created = int(pull.get("created", 0) or 0)
+    pull_updated = int(pull.get("updated", 0) or 0)
+    pull_unchanged = int(pull.get("unchanged", 0) or 0)
+    push_upserted = int(push.get("upserted", 0) or 0)
+    push_deleted = int(push.get("deleted", 0) or 0)
+
+    parts = [
+        f"GitHub wiki sync ({repository or 'repository'})",
+        f"pull: +{pull_created} created, {pull_updated} updated, {pull_unchanged} unchanged",
+        f"push: {push_upserted} upserted, {push_deleted} deleted",
+    ]
+    return " | ".join(parts)
+
+
 def _redirect_resource_wiki_editor(
     *,
     route_kind: str,
@@ -5422,7 +5442,31 @@ def _resource_detail_url_for_uuid(*, actor, resource_uuid: str) -> str:
     )
 
 
-def _resource_wiki_url_for_uuid(*, actor, resource_uuid: str, page_path: str = "") -> str:
+def _resource_wiki_url_for_uuid(
+    *,
+    actor,
+    resource_uuid: str,
+    page_path: str = "",
+    status: str = "",
+) -> str:
+    resolved_uuid = str(resource_uuid or "").strip()
+    if not resolved_uuid:
+        return ""
+
+    url = reverse("wiki")
+    cleaned_page_path = _normalize_kb_result_text(page_path)
+    query = _wiki_query_params(
+        scope=_WIKI_SCOPE_RESOURCE,
+        resource_uuid=resolved_uuid,
+        status=str(status or "").strip(),
+        page_path=cleaned_page_path,
+    )
+    if not query:
+        return url
+    return f"{url}?{urlencode(query)}"
+
+
+def _resource_wiki_sync_url_for_uuid(*, actor, resource_uuid: str) -> str:
     resolved_uuid = str(resource_uuid or "").strip()
     if not resolved_uuid:
         return ""
@@ -5432,30 +5476,31 @@ def _resource_wiki_url_for_uuid(*, actor, resource_uuid: str, page_path: str = "
         .only("route_kind", "route_value")
         .first()
     )
-    url = ""
     if current_alias:
         try:
-            url = _resource_route_reverse(
+            return _resource_route_reverse(
                 route_kind=current_alias.route_kind,
                 route_value=current_alias.route_value,
-                endpoint_key="wiki",
+                endpoint_key="wiki_sync",
                 resource_uuid=resolved_uuid,
             )
         except NoReverseMatch:
-            url = ""
-    if not url:
-        try:
-            url = reverse(
-                "resource_wiki",
-                kwargs={"username": actor.get_username(), "resource_uuid": resolved_uuid},
-            )
-        except NoReverseMatch:
-            return ""
+            pass
+    fallback_actor = actor
+    try:
+        owner_user, _resource = _resolve_resource_owner_and_item(resolved_uuid, actor)
+    except Exception:
+        owner_user = None
+    if owner_user is not None:
+        fallback_actor = owner_user
 
-    cleaned_page_path = _normalize_kb_result_text(page_path)
-    if cleaned_page_path:
-        return f"{url}?{urlencode({'page': cleaned_page_path})}"
-    return url
+    try:
+        return reverse(
+            "resource_wiki_sync",
+            kwargs={"username": fallback_actor.get_username(), "resource_uuid": resolved_uuid},
+        )
+    except NoReverseMatch:
+        return ""
 
 
 def _can_access_owner_resource(*, actor, owner, resource_uuid: str) -> bool:
@@ -5910,7 +5955,7 @@ def setup_welcome(request):
                         github_app.client_id = initial["github_client_id"]
                         github_app.secret = initial["github_client_secret"]
                         github_settings = dict(github_app.settings or {})
-                        github_settings["scope"] = ["read:user", "user:email"]
+                        github_settings["scope"] = list(_GITHUB_CONNECTOR_SCOPES)
                         github_app.settings = github_settings
                         github_app.save()
                         if site is not None:
@@ -6138,8 +6183,6 @@ def home(request):
             cleaned.pop("sort_rank", None)
             cleaned.pop("sort_checked_ts", None)
             attention_rows.append(cleaned)
-        if len(attention_rows) >= 5:
-            break
 
     healthy_count = status_counts["healthy"]
     unhealthy_count = status_counts["unhealthy"]
@@ -6149,6 +6192,37 @@ def home(request):
     log_error_rate_pct = round((log_counts_24h["error"] / logs_total_24h) * 100.0, 1) if logs_total_24h else 0.0
     avg_latency_ms = round(sum(latency_samples) / len(latency_samples), 1) if latency_samples else None
     notification_snapshot = list_user_notifications(request.user, limit=8)
+    overview_notification_rows: list[dict[str, str]] = []
+    channel_labels = {
+        "app": "In-app",
+        "sms": "SMS",
+        "email": "Email",
+    }
+    for raw_item in notification_snapshot.get("items", []):
+        if not isinstance(raw_item, dict):
+            continue
+        level = str(raw_item.get("level") or "info").strip().lower() or "info"
+        tone = "info"
+        if level in {"critical", "error"}:
+            tone = "error"
+        elif level in {"warning", "warn", "alert"}:
+            tone = "warning"
+        resource_uuid = str(raw_item.get("resource_uuid") or "").strip()
+        detail_url = ""
+        if resource_uuid:
+            detail_url = _resource_detail_url_for_uuid(actor=request.user, resource_uuid=resource_uuid)
+        overview_notification_rows.append(
+            {
+                "title": str(raw_item.get("title") or "").strip() or "Notification",
+                "body": str(raw_item.get("body") or "").strip(),
+                "time_label": _format_alert_time(str(raw_item.get("created_at") or "")),
+                "channel_label": channel_labels.get(str(raw_item.get("channel") or "").strip().lower(), "In-app"),
+                "tone": tone,
+                "detail_url": detail_url,
+            }
+        )
+        if len(overview_notification_rows) >= 6:
+            break
     twilio_sms_available = is_twilio_configured()
     email_notifications_available = is_support_inbox_email_alerts_enabled()
     calendar_notification_settings = get_user_calendar_notification_settings(request.user)
@@ -6207,8 +6281,8 @@ def home(request):
             "attention_rows": attention_rows,
             "health_timeline": health_timeline,
             "cloud_log_timeline": cloud_log_timeline,
-            "dashboard_generated_display": _format_display_time(now_utc.isoformat()),
             "notification_unread_count": int(notification_snapshot.get("unread_count") or 0),
+            "overview_notification_rows": overview_notification_rows,
             "twilio_sms_available": twilio_sms_available,
             "email_notifications_available": email_notifications_available,
             "calendar_notification_settings": calendar_notification_settings,
@@ -6488,7 +6562,7 @@ def create_asana_board_task(request, board_gid: str):
         "projects": [resolved_board_gid],
         "workspace": workspace_gid,
     }
-    if bool(getattr(request.user, "is_superuser", False)) and requested_assignee_gid:
+    if bool(getattr(request.user, "is_staff", False)) and requested_assignee_gid:
         create_data["assignee"] = requested_assignee_gid
     else:
         create_data["assignee"] = "me"
@@ -7026,6 +7100,8 @@ def update_asana_task_assignee(request, task_gid: str):
     resolved_task_gid = str(task_gid or "").strip()
     if not resolved_task_gid:
         return JsonResponse({"ok": False, "error": "missing_task_gid"}, status=400)
+    if not bool(getattr(request.user, "is_staff", False)):
+        return JsonResponse({"ok": False, "error": "staff_only"}, status=403)
     payload = _request_json_payload(request)
     assignee_gid = str(request.POST.get("assignee_gid") or payload.get("assignee_gid") or "").strip()
     access_token, token_error = _asana_access_token_for_user(request.user)
@@ -7058,6 +7134,8 @@ def list_asana_workspace_members(request, workspace_gid: str):
     resolved_workspace_gid = str(workspace_gid or "").strip()
     if not resolved_workspace_gid:
         return JsonResponse({"ok": False, "error": "missing_workspace_gid"}, status=400)
+    if not bool(getattr(request.user, "is_staff", False)):
+        return JsonResponse({"ok": False, "error": "staff_only"}, status=403)
     access_token, token_error = _asana_access_token_for_user(request.user)
     if not access_token:
         return JsonResponse({"ok": False, "error": str(token_error or "asana_not_connected")}, status=403)
@@ -7537,6 +7615,23 @@ def notifications_feed(request):
     except (TypeError, ValueError):
         limit = 12
     payload = list_user_notifications(request.user, limit=max(1, min(limit, 50)))
+    items = payload.get("items") if isinstance(payload, dict) else []
+    if isinstance(items, list):
+        enriched_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            enriched = dict(item)
+            resource_uuid = str(enriched.get("resource_uuid") or "").strip()
+            if resource_uuid:
+                enriched["detail_url"] = _resource_detail_url_for_uuid(
+                    actor=request.user,
+                    resource_uuid=resource_uuid,
+                )
+            else:
+                enriched["detail_url"] = ""
+            enriched_items.append(enriched)
+        payload["items"] = enriched_items
     return JsonResponse(payload)
 
 
@@ -7799,7 +7894,7 @@ def _connector_settings_ui_state(
                         github_app.client_id = initial["github_client_id"]
                         github_app.secret = initial["github_client_secret"]
                         github_settings = dict(github_app.settings or {})
-                        github_settings["scope"] = ["read:user", "user:email"]
+                        github_settings["scope"] = list(_GITHUB_CONNECTOR_SCOPES)
                         github_app.settings = github_settings
                         github_app.save()
                         if site is not None:
@@ -8208,6 +8303,22 @@ def app_settings(request):
     account_api_keys = list_user_api_keys(request.user, "account")
     latest_api_key_value = str(request.session.pop("latest_created_api_key", "") or "").strip()
     latest_api_key_type = str(request.session.pop("latest_created_api_key_type", "") or "").strip()
+    settings_admin_react_props = {
+        "actionUrl": f"{reverse('app_settings')}?tab=admin",
+        "csrfToken": get_token(request),
+        "adminSetupReady": bool(admin_context.get("admin_setup_ready", False)),
+        "monitoringEnabled": bool(admin_context.get("monitoring_enabled", True)),
+        "maintenanceMode": bool(admin_context.get("maintenance_mode", False)),
+        "maintenanceMessage": str(admin_context.get("maintenance_message", "") or ""),
+        "defaultModel": str(admin_context.get("default_model", "") or ""),
+        "supportInboxMonitoringEnabled": bool(admin_context.get("support_inbox_monitoring_enabled", False)),
+        "microsoftConnectorConfigured": bool(admin_context.get("microsoft_connector_configured", False)),
+        "microsoftLoginEnabled": bool(admin_context.get("microsoft_login_enabled", False)),
+        "githubConnectorConfigured": bool(admin_context.get("github_connector_configured", False)),
+        "githubLoginEnabled": bool(admin_context.get("github_login_enabled", False)),
+        "askGithubMcpEnabled": bool(admin_context.get("ask_github_mcp_enabled", False)),
+        "askAsanaMcpEnabled": bool(admin_context.get("ask_asana_mcp_enabled", False)),
+    }
 
     return render(
         request,
@@ -8235,6 +8346,7 @@ def app_settings(request):
             "twilio_voice_stream_internal_uri": str(connector_settings_context.get("twilio_voice_stream_internal_uri") or ""),
             "web_voice_token_uri": str(connector_settings_context.get("web_voice_token_uri") or ""),
             "web_voice_log_uri": str(connector_settings_context.get("web_voice_log_uri") or ""),
+            "settings_admin_react_props": settings_admin_react_props,
             **admin_context,
         },
     )
@@ -8332,8 +8444,6 @@ def team_directory(request):
     User = get_user_model()
     teams = Group.objects.all().order_by('name').prefetch_related('user_set')
     users = User.objects.all().order_by('username', 'email').prefetch_related('groups')
-    user_ids = [int(item.id) for item in users]
-    feature_lookup = _feature_access_lookup(user_ids)
 
     user_rows: list[dict[str, object]] = []
     for item in users:
@@ -8341,7 +8451,6 @@ def team_directory(request):
             [str(group.name) for group in item.groups.all()],
             key=lambda value: value.lower(),
         )
-        feature_keys = sorted(feature_lookup.get(int(item.id), set()))
         if item.is_superuser:
             role_label = "Platform Admin"
             role_tone = "warning"
@@ -8362,7 +8471,6 @@ def team_directory(request):
                 "role_label": role_label,
                 "role_tone": role_tone,
                 "team_names": team_names,
-                "feature_keys": feature_keys,
                 "joined_display": _format_display_time(
                     item.date_joined.isoformat() if getattr(item, "date_joined", None) else ""
                 ),
@@ -8428,7 +8536,6 @@ def team_directory(request):
         'team_rows': team_rows,
         'selected_team_id': selected_team_id,
         'selected_team': selected_team,
-        'available_features': _TEAM_DIRECTORY_FEATURES,
         'available_invite_methods': _visible_invite_signup_methods(),
         'invite_default_method_keys': list(_invite_enabled_signup_methods()),
         'status_message': status_message,
@@ -8680,7 +8787,7 @@ def team_directory_invite_preview(request):
 
     preview_url = request.build_absolute_uri(reverse("accept_user_invite", kwargs={"token": "generated-on-send"}))
     allowed_labels = ", ".join(_invite_method_label(item) for item in signup_methods) or "Local account"
-    expiry_text = "Set when invite is sent."
+    expiry_text = _format_invite_datetime_long(_invite_expiry_datetime())
     generated_message = _generate_invite_delivery_message_with_agent(
         actor=request.user,
         invite_channel=invite_channel,
@@ -8794,7 +8901,7 @@ def team_directory_invite_user(request):
 
     invite_url = _invite_absolute_url(request, invite.token)
     allowed_labels = ", ".join(_invite_method_label(item) for item in signup_methods)
-    expiry_text = invite.expires_at.astimezone().strftime("%b %d, %Y %I:%M %p %Z")
+    expiry_text = _format_invite_datetime_long(invite.expires_at)
     generated_message = _generate_invite_delivery_message_with_agent(
         actor=request.user,
         invite_channel=invite_channel,
@@ -9099,6 +9206,43 @@ def _build_wiki_page_listing_context(
     requested_path = _normalize_wiki_path(requested_page_raw, "")
     member_teams = _ssh_team_choices_for_user(actor)
     resource_scope_by_uuid: dict[str, str] = {}
+    team_name_by_id: dict[str, str] = {}
+    resource_team_map: dict[str, list[str]] = {}
+    resource_name_by_uuid: dict[str, str] = {}
+    if actor.is_superuser:
+        team_rows = Group.objects.order_by("name").values("id", "name")
+    else:
+        team_rows = actor.groups.order_by("name").values("id", "name")
+    for row in team_rows:
+        resolved_team_id = _normalize_team_id(str(row.get("id") or ""))
+        resolved_team_name = str(row.get("name") or "").strip() or resolved_team_id
+        if resolved_team_id and resolved_team_name:
+            team_name_by_id[resolved_team_id] = resolved_team_name
+
+    team_filter_ids: list[int] = []
+    if wiki_scope == _WIKI_SCOPE_TEAM:
+        if wiki_team_id:
+            try:
+                team_filter_ids = [int(wiki_team_id)]
+            except Exception:
+                team_filter_ids = []
+        else:
+            team_filter_ids = [int(team_id) for team_id in team_name_by_id.keys() if str(team_id).isdigit()]
+    if team_filter_ids:
+        for share in (
+            ResourceTeamShare.objects.select_related("team")
+            .filter(team_id__in=team_filter_ids)
+            .order_by("team__name", "resource_name", "resource_uuid")
+        ):
+            shared_uuid = _normalize_resource_uuid(getattr(share, "resource_uuid", "") or "")
+            if not shared_uuid:
+                continue
+            share_team_name = str(getattr(getattr(share, "team", None), "name", "") or "").strip()
+            if share_team_name and share_team_name not in resource_team_map.setdefault(shared_uuid, []):
+                resource_team_map[shared_uuid].append(share_team_name)
+            share_resource_name = str(getattr(share, "resource_name", "") or "").strip()
+            if share_resource_name and not resource_name_by_uuid.get(shared_uuid):
+                resource_name_by_uuid[shared_uuid] = share_resource_name
     try:
         for resource_item in list_resources(actor):
             resource_uuid = _normalize_resource_uuid(getattr(resource_item, "resource_uuid", "") or "")
@@ -9108,6 +9252,10 @@ def _build_wiki_page_listing_context(
             if access_scope not in {"account", "team", "global"}:
                 access_scope = "account"
             resource_scope_by_uuid[resource_uuid] = access_scope
+            if not resource_name_by_uuid.get(resource_uuid):
+                resource_name = str(getattr(resource_item, "name", "") or "").strip()
+                if resource_name:
+                    resource_name_by_uuid[resource_uuid] = resource_name
     except Exception:
         resource_scope_by_uuid = {}
     pages = list(
@@ -9128,12 +9276,30 @@ def _build_wiki_page_listing_context(
         item_scope_name = str(item.resource_name or "").strip()
         team_names = sorted([str(team.name) for team in item.team_access.all()], key=lambda value: value.lower())
         nav_scope = "account"
+        nav_team_names: list[str] = []
+        nav_wiki_label = "Workspace Wiki"
         if item_scope == _WIKI_SCOPE_TEAM:
             nav_scope = "team"
+            resolved_team_name = team_name_by_id.get(item_team_id, "")
+            if not resolved_team_name and item_scope_name:
+                resolved_team_name = item_scope_name
+            if not resolved_team_name and item_team_id:
+                resolved_team_name = item_team_id
+            if resolved_team_name:
+                nav_team_names = [resolved_team_name]
+            nav_wiki_label = "Team Wiki"
         elif item_scope == _WIKI_SCOPE_RESOURCE:
             nav_scope = resource_scope_by_uuid.get(item_resource_uuid, "account")
             if nav_scope not in {"account", "team", "global"}:
                 nav_scope = "account"
+            nav_team_names = list(resource_team_map.get(item_resource_uuid, []))
+            resolved_resource_name = item_scope_name or resource_name_by_uuid.get(item_resource_uuid, "")
+            if resolved_resource_name:
+                nav_wiki_label = resolved_resource_name
+            elif item_resource_uuid:
+                nav_wiki_label = item_resource_uuid
+            else:
+                nav_wiki_label = "Resource Wiki"
         else:
             if bool(item.is_draft):
                 nav_scope = "account"
@@ -9141,6 +9307,7 @@ def _build_wiki_page_listing_context(
                 nav_scope = "team"
             else:
                 nav_scope = "global"
+            nav_wiki_label = "Workspace Wiki"
         wiki_pages.append(
             {
                 "id": int(item.id),
@@ -9157,6 +9324,9 @@ def _build_wiki_page_listing_context(
                 "team_id": item_team_id,
                 "team_name": item_scope_name if item_scope == _WIKI_SCOPE_TEAM else "",
                 "nav_scope": nav_scope,
+                "nav_team_names": nav_team_names,
+                "nav_team_keys": [slugify(name) for name in nav_team_names],
+                "nav_wiki_label": nav_wiki_label,
                 "updated_display": _format_display_time(item.updated_at.isoformat() if getattr(item, "updated_at", None) else ""),
             }
         )
@@ -9288,6 +9458,19 @@ def wiki(request):
     wiki_editor_new_url = reverse("wiki_editor_new")
     if wiki_context_query:
         wiki_editor_new_url = f"{wiki_editor_new_url}?{wiki_context_query}"
+    wiki_sync_url = ""
+    wiki_resource_shell_url = ""
+    wiki_resource_shell_label = ""
+    if wiki_scope == _WIKI_SCOPE_RESOURCE and wiki_resource_uuid:
+        wiki_sync_url = _resource_wiki_sync_url_for_uuid(
+            actor=request.user,
+            resource_uuid=wiki_resource_uuid,
+        )
+        wiki_resource_shell_url = _resource_detail_url_for_uuid(
+            actor=request.user,
+            resource_uuid=wiki_resource_uuid,
+        )
+        wiki_resource_shell_label = wiki_resource_name or "Resource"
 
     def _editor_url_builder(page_id: int) -> str:
         base = reverse("wiki_editor", kwargs={"page_id": int(page_id)})
@@ -9327,8 +9510,9 @@ def wiki(request):
             "wiki_context_with_page_prefix": wiki_context_with_page_prefix,
             "wiki_page_base_url": reverse("wiki"),
             "wiki_editor_new_url": wiki_editor_new_url,
-            "wiki_resource_shell_url": "",
-            "wiki_resource_shell_label": "",
+            "wiki_sync_url": wiki_sync_url,
+            "wiki_resource_shell_url": wiki_resource_shell_url,
+            "wiki_resource_shell_label": wiki_resource_shell_label,
             "wiki_scope_locked": False,
             "status_message": status_message,
             "status_tone": status_tone,
@@ -10073,6 +10257,7 @@ def team_page(request):
         resource_name_lookup=team_resource_name_lookup,
     )
     member_teams = _ssh_team_choices_for_user(request.user)
+    github_repo_options, github_repo_error = _github_repository_options_for_user(request.user)
     local_ssh_credentials = list_ssh_credentials(request.user)
     global_ssh_credentials = list_global_ssh_credentials()
     ssh_credentials = []
@@ -10127,6 +10312,8 @@ def team_page(request):
             "team_resource_count": len(team_resources),
             "team_planner_external_items_by_team": team_planner_external_items_by_team,
             "member_teams": member_teams,
+            "github_repo_options": github_repo_options,
+            "github_repo_error": github_repo_error,
             "ssh_credential_choices": ssh_credentials,
             "twilio_sms_available": twilio_sms_available,
             "email_notifications_available": email_notifications_available,
@@ -10137,21 +10324,49 @@ def team_page(request):
 
 @login_required
 def resources(request):
-    resources = list_resources(request.user)
-    resource_alerts = _resource_alerts(resources)
-    resource_insights = _resources_overview_metrics(user=request.user, resources=resources)
-    for item in resources:
+    all_resources = list_resources(request.user)
+    github_repo_options, github_repo_error = _github_repository_options_for_user(request.user)
+    for item in all_resources:
         item.detail_url = _resource_detail_url_for_uuid(actor=request.user, resource_uuid=item.resource_uuid)
+        item.github_repositories = _resource_github_repository_names(item)
+    member_teams = _ssh_team_choices_for_user(request.user)
+
+    requested_team_raw = str(request.GET.get("team") or "").strip()
+    requested_team_slug = slugify(requested_team_raw).strip().lower()
+    team_slug_to_name: dict[str, str] = {}
+    for team_name in member_teams:
+        team_slug = slugify(team_name).strip().lower()
+        if team_slug and team_slug not in team_slug_to_name:
+            team_slug_to_name[team_slug] = team_name
+    active_team_slug = requested_team_slug if requested_team_slug in team_slug_to_name else ""
+    active_team_name = team_slug_to_name.get(active_team_slug, "")
+
+    def _resource_matches_active_team(resource_item, team_name: str) -> bool:
+        if not team_name:
+            return True
+        item_scope = str(getattr(resource_item, "access_scope", "") or "").strip().lower()
+        if item_scope != "team":
+            return False
+        item_team_names = list(getattr(resource_item, "team_names", []) or [])
+        return team_name in item_team_names
+
+    resources = [
+        item for item in all_resources
+        if _resource_matches_active_team(item, active_team_name)
+    ]
+    resource_alerts = _resource_alerts(resources)
     for alert in resource_alerts:
         alert["detail_url"] = _resource_detail_url_for_uuid(
             actor=request.user,
             resource_uuid=str(alert.get("resource_uuid") or "").strip(),
         )
-    member_teams = _ssh_team_choices_for_user(request.user)
+    resource_insights = _resources_overview_metrics(user=request.user, resources=resources)
+
     team_resources_nav = []
     for team_name in member_teams:
+        team_slug = slugify(team_name).strip().lower()
         team_resources = []
-        for item in resources:
+        for item in all_resources:
             item_scope = str(getattr(item, "access_scope", "") or "").strip().lower()
             item_team_names = list(getattr(item, "team_names", []) or [])
             if item_scope != "team" or team_name not in item_team_names:
@@ -10161,6 +10376,8 @@ def resources(request):
             team_resources_nav.append(
                 {
                     "name": team_name,
+                    "slug": team_slug,
+                    "is_active": bool(active_team_slug and active_team_slug == team_slug),
                     "resources": team_resources,
                 }
             )
@@ -10193,14 +10410,34 @@ def resources(request):
                 'is_global': True,
             }
         )
+
+    if active_team_name:
+        filtered_ssh_credentials = []
+        for item in ssh_credentials:
+            scope = str(item.get("scope") or "").strip().lower()
+            item_team_names = [str(value or "").strip() for value in item.get("team_names", []) if str(value or "").strip()]
+            if scope == "team" and active_team_name in item_team_names:
+                filtered_ssh_credentials.append(item)
+                continue
+            if scope == "global_team":
+                # Global keys without explicit team binding are visible for all team views.
+                if not item_team_names or active_team_name in item_team_names:
+                    filtered_ssh_credentials.append(item)
+        ssh_credentials = filtered_ssh_credentials
+
     account_ssh_keys = [item for item in ssh_credentials if item['scope'] == 'account']
     team_ssh_keys = [item for item in ssh_credentials if item['scope'] in {'team', 'global_team'}]
     context = {
         'resources': resources,
         'resource_alerts': resource_alerts,
         'resource_insights': resource_insights,
+        'active_team_slug': active_team_slug,
+        'active_team_name': active_team_name,
+        'active_team_label': active_team_name or 'All Resources',
         'member_teams': member_teams,
         'team_resources_nav': team_resources_nav,
+        'github_repo_options': github_repo_options,
+        'github_repo_error': github_repo_error,
         'account_ssh_keys': account_ssh_keys,
         'team_ssh_keys': team_ssh_keys,
         'ssh_credential_choices': ssh_credentials,
@@ -10229,7 +10466,7 @@ def _resolve_resource_wiki_route_context(*, actor, route_kind: str, route_value:
 
 @login_required
 def resource_wiki(request, username: str, resource_uuid, route_kind: str = "user"):
-    owner, resource, current_alias, active_route_kind, active_route_value = _resolve_resource_wiki_route_context(
+    owner, resource, _current_alias, _active_route_kind, _active_route_value = _resolve_resource_wiki_route_context(
         actor=request.user,
         route_kind=route_kind,
         route_value=username,
@@ -10237,113 +10474,13 @@ def resource_wiki(request, username: str, resource_uuid, route_kind: str = "user
     )
     if owner is None or resource is None:
         return redirect("resources")
-    if current_alias and not _resource_route_matches(current_alias=current_alias, route_kind=route_kind, route_value=username):
-        redirect_url = _resource_route_redirect_url(
-            current_alias=current_alias,
-            endpoint_key="wiki",
-            resource_uuid=resource.resource_uuid,
+    return redirect(
+        _resource_wiki_url_for_uuid(
+            actor=request.user,
+            resource_uuid=str(resource.resource_uuid or ""),
+            page_path=(request.GET.get("page") or "").strip(),
+            status=(request.GET.get("status") or "").strip(),
         )
-        if redirect_url:
-            return redirect(redirect_url)
-    resource_detail_url = _resource_route_reverse(
-        route_kind=active_route_kind,
-        route_value=active_route_value,
-        endpoint_key="detail",
-        resource_uuid=resource.resource_uuid,
-    )
-    wiki_page_base_url = _resource_route_reverse(
-        route_kind=active_route_kind,
-        route_value=active_route_value,
-        endpoint_key="wiki",
-        resource_uuid=resource.resource_uuid,
-    )
-
-    status_code = (request.GET.get("status") or "").strip()
-    status_message, status_tone = _wiki_status_context(status_code)
-
-    scope_context = _resolve_wiki_scope_context(
-        actor=request.user,
-        raw_scope=_WIKI_SCOPE_RESOURCE,
-        raw_resource_uuid=resource.resource_uuid,
-    )
-    wiki_scope = str(scope_context["scope"])
-    wiki_resource_uuid = str(scope_context["resource_uuid"])
-    wiki_resource_name = str(scope_context["resource_name"])
-    wiki_resource_options = list(scope_context["resource_options"])
-    scope_status_code = str(scope_context["status_code"] or "")
-    if not status_message and scope_status_code:
-        status_message, status_tone = _wiki_status_context(scope_status_code)
-
-    requested_page_raw = (request.GET.get("page") or "").strip()
-    listing_context = _build_wiki_page_listing_context(
-        actor=request.user,
-        wiki_scope=wiki_scope,
-        wiki_resource_uuid=wiki_resource_uuid,
-        requested_page_raw=requested_page_raw,
-    )
-    missing_status_code = str(listing_context["missing_status_code"] or "")
-    if not status_message and missing_status_code:
-        status_message, status_tone = _wiki_status_context(missing_status_code)
-
-    wiki_context_query = urlencode(
-        _wiki_query_params(
-            scope=wiki_scope,
-            resource_uuid=wiki_resource_uuid,
-        )
-    )
-    wiki_context_with_page_prefix = f"{wiki_context_query}&" if wiki_context_query else ""
-    wiki_editor_new_url = _resource_route_reverse(
-        route_kind=active_route_kind,
-        route_value=active_route_value,
-        endpoint_key="wiki_editor_new",
-        resource_uuid=resource.resource_uuid,
-    )
-
-    def _editor_url_builder(page_id: int) -> str:
-        return _resource_route_reverse(
-            route_kind=active_route_kind,
-            route_value=active_route_value,
-            endpoint_key="wiki_editor",
-            resource_uuid=resource.resource_uuid,
-            page_id=int(page_id),
-        )
-
-    def _delete_url_builder(page_id: int) -> str:
-        return _resource_route_reverse(
-            route_kind=active_route_kind,
-            route_value=active_route_value,
-            endpoint_key="wiki_delete_page",
-            resource_uuid=resource.resource_uuid,
-            page_id=int(page_id),
-        )
-
-    _apply_wiki_action_urls(
-        listing_context=listing_context,
-        editor_url_builder=_editor_url_builder,
-        delete_url_builder=_delete_url_builder,
-    )
-
-    return render(
-        request,
-        "pages/wiki.html",
-        {
-            **listing_context,
-            "wiki_scope": wiki_scope,
-            "wiki_scope_label": "Resource Wiki",
-            "wiki_is_resource_scope": wiki_scope == _WIKI_SCOPE_RESOURCE,
-            "wiki_resource_uuid": wiki_resource_uuid,
-            "wiki_resource_name": wiki_resource_name or str(resource.name or ""),
-            "wiki_resource_options": wiki_resource_options,
-            "wiki_context_query": wiki_context_query,
-            "wiki_context_with_page_prefix": wiki_context_with_page_prefix,
-            "wiki_page_base_url": wiki_page_base_url,
-            "wiki_editor_new_url": wiki_editor_new_url,
-            "wiki_resource_shell_url": resource_detail_url,
-            "wiki_resource_shell_label": str(resource.name or "").strip() or "Resource",
-            "wiki_scope_locked": True,
-            "status_message": status_message,
-            "status_tone": status_tone,
-        },
     )
 
 
@@ -10619,6 +10756,23 @@ def resource_wiki_create_page(request, username: str, resource_uuid, route_kind:
         resource_uuid=wiki_resource_uuid,
     )
 
+    if not is_draft:
+        sync_result = sync_resource_wiki_with_github(
+            actor=request.user,
+            resource=resource,
+            token_users=[_owner],
+            pull_remote=False,
+            push_changes=True,
+            changed_page_ids=[int(page.id)],
+        )
+        sync_code = str(sync_result.get("code") or "").strip().lower()
+        sync_errors = sync_result.get("errors") if isinstance(sync_result.get("errors"), list) else []
+        if sync_code and sync_code != "ok":
+            warning_text = _resource_wiki_sync_result_message(sync_result)
+            if sync_errors:
+                warning_text = f"{warning_text} ({'; '.join(str(item) for item in sync_errors[:3])})"
+            messages.warning(request, f"Page saved locally. {warning_text}")
+
     if is_draft:
         return _redirect_resource_wiki_editor(
             route_kind=active_route_kind,
@@ -10715,6 +10869,7 @@ def resource_wiki_update_page(request, username: str, resource_uuid, page_id: in
         )
 
     was_draft = bool(page.is_draft)
+    previous_path = str(page.path or "")
     with transaction.atomic():
         page.scope = wiki_scope
         page.resource_uuid = wiki_resource_uuid
@@ -10747,6 +10902,30 @@ def resource_wiki_update_page(request, username: str, resource_uuid, page_id: in
         actor=request.user,
         resource_uuid=wiki_resource_uuid,
     )
+
+    sync_deleted_paths: list[str] = []
+    if previous_path and previous_path.strip().lower() != str(page.path or "").strip().lower():
+        sync_deleted_paths.append(previous_path)
+    if is_draft and not was_draft:
+        sync_deleted_paths.append(str(page.path or ""))
+
+    sync_changed_ids: list[int] | None = [int(page.id)] if not is_draft else []
+    sync_result = sync_resource_wiki_with_github(
+        actor=request.user,
+        resource=resource,
+        token_users=[_owner],
+        pull_remote=False,
+        push_changes=True,
+        changed_page_ids=sync_changed_ids,
+        deleted_paths=sync_deleted_paths,
+    )
+    sync_code = str(sync_result.get("code") or "").strip().lower()
+    sync_errors = sync_result.get("errors") if isinstance(sync_result.get("errors"), list) else []
+    if sync_code and sync_code != "ok":
+        warning_text = _resource_wiki_sync_result_message(sync_result)
+        if sync_errors:
+            warning_text = f"{warning_text} ({'; '.join(str(item) for item in sync_errors[:3])})"
+        messages.warning(request, f"Page saved locally. {warning_text}")
 
     if is_draft:
         return _redirect_resource_wiki_editor(
@@ -10796,16 +10975,105 @@ def resource_wiki_delete_page(request, username: str, resource_uuid, page_id: in
             resource_uuid=resource_uuid_normalized,
             status="wiki_page_not_found",
         )
+    deleted_page_path = str(page.path or "")
     page.delete()
     _upsert_resource_kb_after_wiki_mutation(
         actor=request.user,
         resource_uuid=resource_uuid_normalized,
     )
+    sync_result = sync_resource_wiki_with_github(
+        actor=request.user,
+        resource=resource,
+        token_users=[_owner],
+        pull_remote=False,
+        push_changes=True,
+        changed_page_ids=[],
+        deleted_paths=[deleted_page_path],
+    )
+    sync_code = str(sync_result.get("code") or "").strip().lower()
+    sync_errors = sync_result.get("errors") if isinstance(sync_result.get("errors"), list) else []
+    if sync_code and sync_code != "ok":
+        warning_text = _resource_wiki_sync_result_message(sync_result)
+        if sync_errors:
+            warning_text = f"{warning_text} ({'; '.join(str(item) for item in sync_errors[:3])})"
+        messages.warning(request, f"Page deleted locally. {warning_text}")
     return _redirect_resource_wiki(
         route_kind=active_route_kind,
         route_value=active_route_value,
         resource_uuid=resource_uuid_normalized,
         status="wiki_page_deleted",
+    )
+
+
+@login_required
+@require_POST
+def resource_wiki_sync(request, username: str, resource_uuid, route_kind: str = "user"):
+    owner, resource, current_alias, active_route_kind, active_route_value = _resolve_resource_wiki_route_context(
+        actor=request.user,
+        route_kind=route_kind,
+        route_value=username,
+        resource_uuid=str(resource_uuid),
+    )
+    if owner is None or resource is None:
+        return redirect("resources")
+    if current_alias and not _resource_route_matches(current_alias=current_alias, route_kind=route_kind, route_value=username):
+        redirect_url = _resource_route_redirect_url(
+            current_alias=current_alias,
+            endpoint_key="wiki_sync",
+            resource_uuid=resource.resource_uuid,
+        )
+        if redirect_url:
+            return redirect(redirect_url)
+
+    requested_page_path = str(request.POST.get("page") or "").strip()
+    sync_result = sync_resource_wiki_with_github(
+        actor=request.user,
+        resource=resource,
+        token_users=[owner],
+        pull_remote=True,
+        push_changes=True,
+        changed_page_ids=None,
+    )
+
+    status_code = "wiki_sync_failed"
+    sync_code = str(sync_result.get("code") or "").strip().lower()
+    sync_errors = sync_result.get("errors") if isinstance(sync_result.get("errors"), list) else []
+    sync_summary = _resource_wiki_sync_result_message(sync_result)
+
+    if sync_code == "ok":
+        status_code = "wiki_sync_completed"
+        messages.success(request, sync_summary)
+    elif sync_code == "partial_error":
+        status_code = "wiki_sync_partial"
+        detail = "; ".join(str(item) for item in sync_errors[:3]) if sync_errors else ""
+        messages.warning(request, f"{sync_summary}{f' ({detail})' if detail else ''}")
+    elif sync_code in {"missing_github_repositories", "missing_github_token"}:
+        status_code = "wiki_sync_unavailable"
+        messages.warning(request, sync_summary)
+    else:
+        detail = "; ".join(str(item) for item in sync_errors[:3]) if sync_errors else sync_code
+        messages.error(request, f"{sync_summary}{f' ({detail})' if detail else ''}")
+
+    if sync_code in {"ok", "partial_error"}:
+        _upsert_resource_kb_after_wiki_mutation(
+            actor=request.user,
+            resource_uuid=_normalize_resource_uuid(resource.resource_uuid),
+        )
+
+    if _post_flag(request.POST, "return_to_scope_wiki"):
+        return _redirect_wiki(
+            status=status_code,
+            page_path=requested_page_path,
+            scope=_WIKI_SCOPE_RESOURCE,
+            resource_uuid=_normalize_resource_uuid(resource.resource_uuid),
+        )
+
+    return _redirect_resource_wiki(
+        route_kind=active_route_kind,
+        route_value=active_route_value,
+        resource_uuid=_normalize_resource_uuid(resource.resource_uuid),
+        status=status_code,
+        page_path=requested_page_path,
     )
 
 
@@ -10852,11 +11120,9 @@ def resource_detail(request, username: str, resource_uuid, route_kind: str = "us
         endpoint_key="detail",
         resource_uuid=resource.resource_uuid,
     )
-    resource_wiki_url = _resource_route_reverse(
-        route_kind=active_route_kind,
-        route_value=active_route_value,
-        endpoint_key="wiki",
-        resource_uuid=resource.resource_uuid,
+    resource_wiki_url = _resource_wiki_url_for_uuid(
+        actor=request.user,
+        resource_uuid=str(resource.resource_uuid or ""),
     )
     health_check_url = _resource_route_reverse(
         route_kind=active_route_kind,
@@ -10900,6 +11166,15 @@ def resource_detail(request, username: str, resource_uuid, route_kind: str = "us
         alert_settings["cloud_log_errors_email_enabled"] = False
     can_manage_resource = _can_manage_owner_resource(actor=request.user, owner=owner)
     member_teams: list[str] = _ssh_team_choices_for_user(request.user) if can_manage_resource else []
+    github_repo_options: list[dict[str, object]] = []
+    github_repo_error = ""
+    if can_manage_resource:
+        github_repo_options, github_repo_error = _github_repository_options_for_user(request.user)
+    resource_github_repository_names = _resource_github_repository_names(resource)
+    resource_github_repositories = _resource_github_repository_rows(
+        resource=resource,
+        github_repo_options=github_repo_options,
+    )
     ssh_credentials: list[dict[str, object]] = []
     if can_manage_resource:
         local_ssh_credentials = list_ssh_credentials(request.user)
@@ -11042,6 +11317,10 @@ def resource_detail(request, username: str, resource_uuid, route_kind: str = "us
             "twilio_sms_available": twilio_sms_available,
             "email_notifications_available": email_notifications_available,
             "member_teams": member_teams,
+            "github_repo_options": github_repo_options,
+            "github_repo_error": github_repo_error,
+            "resource_github_repository_names": resource_github_repository_names,
+            "resource_github_repositories": resource_github_repositories,
             "ssh_credential_choices": ssh_credentials,
             "resource_asana_overview": resource_asana_overview,
             "resource_asana_all_tasks": enriched_asana_rows,
@@ -11441,6 +11720,12 @@ def team_resource_wiki_update_page(request, team_name: str, resource_uuid, page_
 @superuser_required
 def team_resource_wiki_delete_page(request, team_name: str, resource_uuid, page_id: int):
     return resource_wiki_delete_page(request, team_name, resource_uuid, page_id, route_kind="team")
+
+
+@login_required
+@require_POST
+def team_resource_wiki_sync(request, team_name: str, resource_uuid):
+    return resource_wiki_sync(request, team_name, resource_uuid, route_kind="team")
 
 
 @login_required
@@ -13733,6 +14018,342 @@ def _resolve_github_mcp_upstream_url() -> str:
     return configured or "http://github-mcp:8082/"
 
 
+def _github_access_token_for_user(user) -> tuple[str, str | None]:
+    try:
+        account = (
+            SocialAccount.objects.filter(user=user, provider="github")
+            .order_by("id")
+            .first()
+        )
+    except (OperationalError, ProgrammingError):
+        return "", None
+    except Exception:
+        return "", "Unable to load GitHub account connection."
+
+    if account is None:
+        return "", "GitHub is not connected for this user."
+
+    try:
+        token_row = (
+            SocialToken.objects.filter(account=account)
+            .exclude(token__exact="")
+            .order_by("-id")
+            .first()
+        )
+    except (OperationalError, ProgrammingError):
+        token_row = None
+    except Exception:
+        token_row = None
+
+    access_token = str(getattr(token_row, "token", "") or "").strip()
+    if access_token:
+        return access_token, None
+    return "", "GitHub is connected, but the OAuth token is missing. Reconnect GitHub from Settings."
+
+
+def _parse_github_oauth_scopes(raw_value: object) -> set[str]:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return set()
+    return {
+        item.strip()
+        for item in raw.split(",")
+        if item and item.strip()
+    }
+
+
+def _github_repository_options_for_user(
+    user,
+    *,
+    max_pages: int = 20,
+    per_page: int = 100,
+) -> tuple[list[dict[str, object]], str]:
+    access_token, token_error = _github_access_token_for_user(user)
+    if not access_token:
+        return [], token_error or "GitHub is not connected for this user."
+
+    collected: list[dict[str, object]] = []
+    seen: set[str] = set()
+    diagnostics: list[str] = []
+    diagnostic_seen: set[str] = set()
+    granted_scopes: set[str] = set()
+    resolved_pages = max(1, min(int(max_pages or 1), 100))
+    resolved_per_page = max(1, min(int(per_page or 100), 100))
+
+    request_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    def _add_diagnostic(message: str) -> None:
+        text = str(message or "").strip()
+        if not text or text in diagnostic_seen:
+            return
+        diagnostic_seen.add(text)
+        diagnostics.append(text)
+
+    def _add_repo_payload(payload: list[object]) -> None:
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            full_name = _normalize_github_repository_full_name(row.get("full_name") or "")
+            if not full_name:
+                continue
+            dedupe_key = full_name.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            html_url = str(row.get("html_url") or "").strip() or f"https://github.com/{full_name}"
+            collected.append(
+                {
+                    "full_name": full_name,
+                    "html_url": html_url,
+                    "private": bool(row.get("private", False)),
+                }
+            )
+
+    def _github_get(url: str, *, params: dict[str, object]) -> tuple[requests.Response | None, str]:
+        try:
+            response = requests.get(
+                url,
+                headers=request_headers,
+                params=params,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            return None, f"Unable to reach GitHub right now: {exc}"
+        granted_scopes.update(_parse_github_oauth_scopes(response.headers.get("X-OAuth-Scopes")))
+        return response, ""
+
+    for page in range(1, resolved_pages + 1):
+        request_variants = [
+            {
+                "affiliation": "owner,collaborator,organization_member",
+                "sort": "updated",
+                "per_page": resolved_per_page,
+                "page": page,
+            },
+            {
+                "sort": "updated",
+                "per_page": resolved_per_page,
+                "page": page,
+            },
+        ]
+        response = None
+        last_request_error = ""
+        for params in request_variants:
+            candidate, request_error = _github_get("https://api.github.com/user/repos", params=params)
+            if request_error:
+                return [], request_error
+            if candidate is None:
+                continue
+
+            # GitHub can reject some param combinations for certain org/enterprise accounts.
+            # Fall back to the simpler query before failing the repo picker.
+            if int(candidate.status_code) == 422:
+                body_text = str(candidate.text or "").strip()
+                last_request_error = body_text[:240] if body_text else "status 422"
+                response = candidate
+                continue
+            response = candidate
+            break
+
+        if response is None:
+            return [], "GitHub repositories request failed before a response was received."
+
+        if response.status_code >= 400:
+            oauth_scopes = str(response.headers.get("X-OAuth-Scopes") or "").strip()
+            sso_hint = str(response.headers.get("X-GitHub-SSO") or "").strip()
+            body_text = str(response.text or "").strip()
+            snippet = body_text[:240] if body_text else (last_request_error or f"status {response.status_code}")
+            if response.status_code in {401, 403}:
+                if sso_hint:
+                    return [], (
+                        "GitHub repositories request failed: organization SSO authorization is required. "
+                        "Authorize this GitHub token for your org, then reconnect if needed."
+                    )
+                if oauth_scopes:
+                    return [], (
+                        "GitHub repositories request failed: authorization issue. "
+                        f"Current token scopes: {oauth_scopes}. "
+                        "Reconnect GitHub from Settings to grant org/private repo access."
+                    )
+                return [], (
+                    "GitHub repositories request failed: authorization issue. "
+                    "Reconnect GitHub from Settings to grant org/private repo access."
+                )
+            return [], f"GitHub repositories request failed: {snippet}"
+        try:
+            payload = response.json() if response.content else []
+        except Exception as exc:
+            return [], f"GitHub repositories response was invalid JSON: {exc}"
+        if not isinstance(payload, list):
+            return [], "GitHub repositories response format was unexpected."
+
+        _add_repo_payload(payload)
+        if len(payload) < resolved_per_page:
+            break
+
+    # Explicit org walk for cases where /user/repos omits org repos for a user/token combination.
+    org_logins: list[str] = []
+    max_org_pages = max(1, min(resolved_pages, 20))
+    for page in range(1, max_org_pages + 1):
+        response, request_error = _github_get(
+            "https://api.github.com/user/orgs",
+            params={"per_page": resolved_per_page, "page": page},
+        )
+        if request_error:
+            _add_diagnostic(request_error)
+            break
+        if response is None:
+            break
+        if response.status_code in {401, 403}:
+            sso_hint = str(response.headers.get("X-GitHub-SSO") or "").strip()
+            oauth_scopes = str(response.headers.get("X-OAuth-Scopes") or "").strip()
+            if sso_hint:
+                _add_diagnostic(
+                    "GitHub org access requires SSO authorization. "
+                    "Authorize this token for your org, then reconnect GitHub."
+                )
+            elif oauth_scopes:
+                _add_diagnostic(
+                    "GitHub org access is limited by token scopes. "
+                    f"Current token scopes: {oauth_scopes}."
+                )
+            else:
+                _add_diagnostic(
+                    "GitHub org access is limited by authorization. "
+                    "Reconnect GitHub from Settings to grant org/private repo access."
+                )
+            break
+        if response.status_code >= 400:
+            break
+
+        try:
+            payload = response.json() if response.content else []
+        except Exception:
+            break
+        if not isinstance(payload, list):
+            break
+
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            login = str(row.get("login") or "").strip()
+            if login:
+                org_logins.append(login)
+        if len(payload) < resolved_per_page:
+            break
+
+    deduped_org_logins: list[str] = []
+    seen_org_logins: set[str] = set()
+    for org_login in org_logins:
+        key = org_login.lower()
+        if key in seen_org_logins:
+            continue
+        seen_org_logins.add(key)
+        deduped_org_logins.append(org_login)
+
+    for org_login in deduped_org_logins:
+        for page in range(1, max_org_pages + 1):
+            response, request_error = _github_get(
+                f"https://api.github.com/orgs/{org_login}/repos",
+                params={
+                    "type": "all",
+                    "sort": "updated",
+                    "per_page": resolved_per_page,
+                    "page": page,
+                },
+            )
+            if request_error:
+                _add_diagnostic(request_error)
+                break
+            if response is None:
+                break
+            if response.status_code in {401, 403}:
+                sso_hint = str(response.headers.get("X-GitHub-SSO") or "").strip()
+                if sso_hint:
+                    _add_diagnostic(
+                        f"GitHub organization repos for {org_login} require SSO authorization."
+                    )
+                break
+            if response.status_code == 404:
+                # Not a member of this org for this token or org is hidden.
+                break
+            if response.status_code >= 400:
+                body_text = str(response.text or "").strip()
+                snippet = body_text[:240] if body_text else f"status {response.status_code}"
+                _add_diagnostic(f"GitHub org repository listing for {org_login} failed: {snippet}")
+                break
+            try:
+                payload = response.json() if response.content else []
+            except Exception:
+                _add_diagnostic(f"GitHub org repository response for {org_login} was invalid JSON.")
+                break
+            if not isinstance(payload, list):
+                _add_diagnostic(f"GitHub org repository response for {org_login} had an unexpected format.")
+                break
+
+            _add_repo_payload(payload)
+            if len(payload) < resolved_per_page:
+                break
+
+    if granted_scopes:
+        missing_scope_names = [
+            scope_name
+            for scope_name in ("read:org", "repo")
+            if scope_name not in granted_scopes
+        ]
+        if missing_scope_names:
+            _add_diagnostic(
+                "GitHub repo picker is running with limited OAuth scopes "
+                f"({', '.join(sorted(granted_scopes))}). "
+                f"Missing {', '.join(missing_scope_names)}. "
+                "Reconnect GitHub from Settings to grant org/private repository access."
+            )
+
+    collected.sort(key=lambda item: str(item.get("full_name") or "").lower())
+    return collected, " ".join(diagnostics)
+
+
+def _resource_github_repository_names(resource) -> list[str]:
+    metadata = getattr(resource, "resource_metadata", None)
+    if not isinstance(metadata, dict):
+        return []
+    return _normalize_resource_github_repositories(metadata.get("github_repositories"))
+
+
+def _resource_github_repository_rows(
+    *,
+    resource,
+    github_repo_options: list[dict[str, object]] | None = None,
+) -> list[dict[str, str]]:
+    selected_names = _resource_github_repository_names(resource)
+    if not selected_names:
+        return []
+    option_lookup: dict[str, str] = {}
+    for item in github_repo_options or []:
+        if not isinstance(item, dict):
+            continue
+        full_name = _normalize_github_repository_full_name(item.get("full_name") or "")
+        if not full_name:
+            continue
+        option_lookup[full_name.lower()] = (
+            str(item.get("html_url") or "").strip()
+            or f"https://github.com/{full_name}"
+        )
+    rows: list[dict[str, str]] = []
+    for full_name in selected_names:
+        rows.append(
+            {
+                "full_name": full_name,
+                "html_url": option_lookup.get(full_name.lower(), f"https://github.com/{full_name}"),
+            }
+        )
+    return rows
+
+
 _ASANA_MCP_TOKEN_CACHE: dict[str, object] = {"access_token": "", "expires_at": 0.0}
 _ASANA_MCP_TOKEN_LOCK = threading.Lock()
 
@@ -13827,15 +14448,65 @@ def _normalize_openai_tool_name(raw_name: str, *, used_names: set[str], fallback
         suffix += 1
 
 
-def _github_mcp_jsonrpc_request(*, method: str, params: dict | None = None, timeout: int = 30) -> dict:
+def _jsonrpc_payload_from_sse_body(body_text: str, *, request_id: str) -> object | None:
+    text = str(body_text or "").strip()
+    if not text or "data:" not in text:
+        return None
+
+    chunks: list[str] = []
+    current_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = str(raw_line or "").rstrip("\r")
+        if not line:
+            if current_lines:
+                chunks.append("\n".join(current_lines).strip())
+                current_lines = []
+            continue
+        if line.startswith("data:"):
+            current_lines.append(line[5:].lstrip())
+    if current_lines:
+        chunks.append("\n".join(current_lines).strip())
+
+    parsed_items: list[object] = []
+    for chunk in chunks:
+        if not chunk or chunk == "[DONE]":
+            continue
+        try:
+            parsed_items.append(json.loads(chunk))
+        except Exception:
+            continue
+    if not parsed_items:
+        return None
+
+    for item in parsed_items:
+        if isinstance(item, dict) and str(item.get("id") or "") == request_id:
+            return item
+    return parsed_items[-1]
+
+
+def _github_mcp_jsonrpc_request(
+    *,
+    method: str,
+    params: dict | None = None,
+    timeout: int = 30,
+    access_token: str = "",
+) -> dict:
     request_id = f"ask-{get_random_string(10)}"
     payload: dict[str, object] = {"jsonrpc": "2.0", "id": request_id, "method": str(method or "").strip()}
     if isinstance(params, dict):
         payload["params"] = params
 
+    resolved_access_token = str(access_token or os.getenv("ASK_GITHUB_MCP_ACCESS_TOKEN") or "").strip()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if resolved_access_token:
+        headers["Authorization"] = f"Bearer {resolved_access_token}"
+
     response = requests.post(
         _resolve_github_mcp_upstream_url(),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=headers,
         json=payload,
         timeout=max(5, int(timeout or 30)),
     )
@@ -13846,8 +14517,10 @@ def _github_mcp_jsonrpc_request(*, method: str, params: dict | None = None, time
     try:
         decoded = response.json()
     except Exception as exc:
-        snippet = body_text[:400] if body_text else "no body"
-        raise RuntimeError(f"github mcp non-json response ({exc}): {snippet}") from exc
+        decoded = _jsonrpc_payload_from_sse_body(body_text, request_id=request_id)
+        if decoded is None:
+            snippet = body_text[:400] if body_text else "no body"
+            raise RuntimeError(f"github mcp non-json response ({exc}): {snippet}") from exc
 
     candidate = decoded
     if isinstance(decoded, list):
@@ -13867,9 +14540,15 @@ def _github_mcp_jsonrpc_request(*, method: str, params: dict | None = None, time
     return candidate
 
 
-def _github_mcp_list_tools() -> tuple[list[dict], dict[str, str], str]:
+def _github_mcp_list_tools(*, user=None) -> tuple[list[dict], dict[str, str], str]:
+    access_token, token_error = _github_access_token_for_user(user)
+    if not access_token:
+        fallback_token = str(os.getenv("ASK_GITHUB_MCP_ACCESS_TOKEN") or "").strip()
+        if not fallback_token:
+            return [], {}, token_error or "GitHub OAuth token is unavailable for this user."
+        access_token = fallback_token
     try:
-        payload = _github_mcp_jsonrpc_request(method="tools/list", params={})
+        payload = _github_mcp_jsonrpc_request(method="tools/list", params={}, access_token=access_token)
     except Exception:
         try:
             _github_mcp_jsonrpc_request(
@@ -13879,8 +14558,9 @@ def _github_mcp_list_tools() -> tuple[list[dict], dict[str, str], str]:
                     "capabilities": {},
                     "clientInfo": {"name": "alshival-ask", "version": "1.0"},
                 },
+                access_token=access_token,
             )
-            payload = _github_mcp_jsonrpc_request(method="tools/list", params={})
+            payload = _github_mcp_jsonrpc_request(method="tools/list", params={}, access_token=access_token)
         except Exception as exc:
             return [], {}, str(exc)
 
@@ -13937,10 +14617,21 @@ def _github_mcp_list_tools() -> tuple[list[dict], dict[str, str], str]:
     return specs, name_map, ""
 
 
-def _github_mcp_call_tool(*, tool_name: str, args: dict) -> dict:
+def _github_mcp_call_tool(*, user, tool_name: str, args: dict) -> dict:
     resolved_tool_name = str(tool_name or "").strip()
     if not resolved_tool_name:
         return {"ok": False, "error": "github mcp tool name is required"}
+    access_token, token_error = _github_access_token_for_user(user)
+    if not access_token:
+        fallback_token = str(os.getenv("ASK_GITHUB_MCP_ACCESS_TOKEN") or "").strip()
+        if not fallback_token:
+            return {
+                "ok": False,
+                "source": "github_mcp",
+                "tool_name": resolved_tool_name,
+                "error": token_error or "GitHub OAuth token is unavailable for this user.",
+            }
+        access_token = fallback_token
     try:
         payload = _github_mcp_jsonrpc_request(
             method="tools/call",
@@ -13949,6 +14640,7 @@ def _github_mcp_call_tool(*, tool_name: str, args: dict) -> dict:
                 "arguments": args if isinstance(args, dict) else {},
             },
             timeout=60,
+            access_token=access_token,
         )
     except Exception as exc:
         return {"ok": False, "source": "github_mcp", "tool_name": resolved_tool_name, "error": str(exc)}
@@ -14846,7 +15538,7 @@ def _ask_alshival_generate_reply_for_user(
     )
     github_mcp_error = ""
     if github_mcp_enabled:
-        github_tool_specs, github_tool_name_map, github_mcp_error = _github_mcp_list_tools()
+        github_tool_specs, github_tool_name_map, github_mcp_error = _github_mcp_list_tools(user=user)
     asana_tool_specs: list[dict] = []
     asana_tool_name_map: dict[str, str] = {}
     asana_mcp_enabled = bool(
@@ -14965,7 +15657,7 @@ def _ask_alshival_generate_reply_for_user(
                     parsed_args = {}
                 github_tool_name = github_tool_name_map.get(tool_name, "")
                 if github_tool_name:
-                    result = _github_mcp_call_tool(tool_name=github_tool_name, args=parsed_args)
+                    result = _github_mcp_call_tool(user=user, tool_name=github_tool_name, args=parsed_args)
                 else:
                     asana_tool_name = asana_tool_name_map.get(tool_name, "")
                     if asana_tool_name:
@@ -15156,10 +15848,289 @@ def _twiml_sms_response(message: str) -> HttpResponse:
     return HttpResponse(xml_body, content_type="application/xml")
 
 
+_ASK_SESSION_GREETING_SESSION_KEY = "ask_session_greeting_shown_at"
+_ASK_SESSION_GREETING_DURATION_MS = 5000
+
+
+def _ask_session_greeting_context_for_user(user) -> dict[str, object]:
+    now_local = datetime.now(timezone.utc).astimezone()
+    resources = list_resources(user)
+    status_counts = {"healthy": 0, "unhealthy": 0, "unknown": 0}
+    attention_resources: list[dict[str, str]] = []
+
+    for item in resources:
+        status = _normalize_health_status(getattr(item, "last_status", ""))
+        status_counts[status] += 1
+        if status == "healthy":
+            continue
+        resource_uuid = str(getattr(item, "resource_uuid", "") or "").strip().lower()
+        attention_resources.append(
+            {
+                "resource_uuid": resource_uuid,
+                "name": str(getattr(item, "name", "") or "Unnamed resource").strip(),
+                "status": status,
+                "last_error": str(getattr(item, "last_error", "") or "").strip(),
+                "detail_url": _resource_detail_url_for_uuid(actor=user, resource_uuid=resource_uuid),
+            }
+        )
+
+    attention_resources.sort(
+        key=lambda row: (0 if str(row.get("status") or "") == "unhealthy" else 1, str(row.get("name") or "").lower())
+    )
+    attention_resources = attention_resources[:5]
+
+    notification_snapshot = list_user_notifications(user, limit=8)
+    unread_count = int(notification_snapshot.get("unread_count") or 0)
+    alert_titles: list[str] = []
+    for row in notification_snapshot.get("items", []):
+        if not isinstance(row, dict):
+            continue
+        level = str(row.get("level") or "").strip().lower()
+        if level not in {"critical", "error", "warning", "warn", "alert"}:
+            continue
+        title = str(row.get("title") or "").strip()
+        if title:
+            alert_titles.append(title)
+        if len(alert_titles) >= 3:
+            break
+
+    return {
+        "current_datetime_long": now_local.strftime("%A, %B %d, %Y %H:%M:%S %Z").strip(),
+        "username": str(getattr(user, "username", "") or "").strip(),
+        "display_name": " ".join(
+            [
+                str(getattr(user, "first_name", "") or "").strip(),
+                str(getattr(user, "last_name", "") or "").strip(),
+            ]
+        ).strip(),
+        "resources_total": int(len(resources)),
+        "resources_healthy": int(status_counts["healthy"]),
+        "resources_unhealthy": int(status_counts["unhealthy"]),
+        "resources_unknown": int(status_counts["unknown"]),
+        "attention_resources": attention_resources,
+        "unread_notifications": unread_count,
+        "top_alert_titles": alert_titles,
+    }
+
+
+def _default_session_greeting_markdown(*, user, context: dict[str, object]) -> str:
+    name = str(context.get("display_name") or "").strip() or str(getattr(user, "username", "") or "").strip() or "there"
+    unhealthy_count = int(context.get("resources_unhealthy") or 0)
+    unknown_count = int(context.get("resources_unknown") or 0)
+    unread_notifications = int(context.get("unread_notifications") or 0)
+    total_resources = int(context.get("resources_total") or 0)
+    attention_resources = context.get("attention_resources") if isinstance(context.get("attention_resources"), list) else []
+    top_alert_titles = context.get("top_alert_titles") if isinstance(context.get("top_alert_titles"), list) else []
+
+    lines = [
+        f"Hi {name}, welcome back.",
+        f"As of **{str(context.get('current_datetime_long') or '').strip()}**: {unhealthy_count} unhealthy, {unknown_count} unknown, {unread_notifications} unread alerts/notifications across {total_resources} resources.",
+        "",
+        "### Today's agenda",
+    ]
+    if unhealthy_count > 0:
+        lines.append("1. Triage unhealthy resources first and confirm their latest error details.")
+    elif unknown_count > 0:
+        lines.append("1. Investigate unknown resources and verify checks are reporting correctly.")
+    else:
+        lines.append("1. No current outages detected. Run a quick health scan and review change risk.")
+    if unread_notifications > 0:
+        lines.append("2. Review unread notifications and close stale incidents.")
+    else:
+        lines.append("2. Check notification stream for new warnings and keep routing tuned.")
+    lines.append("3. Update runbooks or owners for any repeating failures.")
+
+    if attention_resources:
+        lines.append("")
+        lines.append("**Needs attention:**")
+        for row in attention_resources[:3]:
+            name_value = str(row.get("name") or "Resource").strip()
+            status_value = str(row.get("status") or "unknown").strip()
+            detail_url = str(row.get("detail_url") or "").strip()
+            if detail_url:
+                lines.append(f"- [{name_value}]({detail_url}) ({status_value})")
+            else:
+                lines.append(f"- {name_value} ({status_value})")
+    elif top_alert_titles:
+        lines.append("")
+        lines.append("**Latest alerts:**")
+        for title in top_alert_titles[:3]:
+            lines.append(f"- {str(title or '').strip()}")
+
+    return "\n".join(lines).strip()
+
+
+def _generate_session_greeting_markdown_with_agent(*, user, context: dict[str, object]) -> str:
+    setup = get_setup_state()
+    api_key = str(getattr(setup, "openai_api_key", "") or "").strip()
+    if not api_key:
+        return ""
+
+    model = (
+        str(getattr(settings, "ALSHIVAL_OPENAI_CHAT_MODEL", "") or "").strip()
+        or str(getattr(setup, "default_model", "") or "").strip()
+        or get_alshival_default_model()
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "\n".join(
+                [
+                    "You are Alshival writing a brief session-start greeting for the user.",
+                    "Output markdown only.",
+                    "Keep it under 140 words.",
+                    "Use current_datetime_long as the absolute current timestamp reference.",
+                    "Include a heading exactly `### Today's agenda` and 2-4 prioritized numbered items.",
+                    "Focus first on unhealthy/unknown resources and unread alerts.",
+                    "If there are no active issues, provide preventive checks and planning priorities.",
+                    "Use factual data from the provided JSON context only.",
+                    "Tone: concise, calm, operational.",
+                ]
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Write the session greeting from this context JSON:\n{json.dumps(context)}",
+        },
+    ]
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+    }
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=20,
+        )
+    except requests.RequestException:
+        return ""
+    if int(response.status_code) >= 400:
+        return ""
+    data = response.json() if response.content else {}
+    text = _extract_chat_completion_text(data)
+    return str(text or "").strip()
+
+
 @login_required
 @require_GET
 def ask_alshival_widget_page(request):
     return render(request, "pages/ask_widget_popout.html")
+
+
+@login_required
+@require_GET
+def ask_alshival_session_greeting(request):
+    shown_at = str(request.session.get(_ASK_SESSION_GREETING_SESSION_KEY) or "").strip()
+    if shown_at:
+        return JsonResponse(
+            {
+                "ok": True,
+                "show": False,
+                "already_shown": True,
+            }
+        )
+
+    context = _ask_session_greeting_context_for_user(request.user)
+    markdown = _generate_session_greeting_markdown_with_agent(user=request.user, context=context)
+    generated_by_ai = bool(markdown)
+    if not markdown:
+        markdown = _default_session_greeting_markdown(user=request.user, context=context)
+    if not markdown:
+        return JsonResponse({"ok": True, "show": False})
+
+    try:
+        add_ask_chat_message(
+            request.user,
+            conversation_id="default",
+            role="assistant",
+            content=str(markdown).strip()[:8000],
+        )
+    except Exception:
+        pass
+
+    request.session[_ASK_SESSION_GREETING_SESSION_KEY] = datetime.now(timezone.utc).isoformat()
+    request.session.modified = True
+    return JsonResponse(
+        {
+            "ok": True,
+            "show": True,
+            "markdown": markdown,
+            "duration_ms": _ASK_SESSION_GREETING_DURATION_MS,
+            "generated_by_ai": generated_by_ai,
+        }
+    )
+
+
+@login_required
+@require_GET
+def ask_alshival_chat_history(request):
+    conversation_id = str(request.GET.get("conversation_id") or "").strip() or "default"
+    try:
+        limit = int(request.GET.get("limit") or 40)
+    except Exception:
+        limit = 40
+    resolved_limit = max(1, min(limit, 120))
+
+    rows = list_ask_chat_messages(
+        request.user,
+        conversation_id=conversation_id,
+        limit=resolved_limit,
+    )
+    messages_payload: list[dict[str, str]] = []
+    for row in rows:
+        role = str(row.get("role") or "").strip().lower()
+        content = str(row.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        messages_payload.append(
+            {
+                "role": role,
+                "content": content,
+                "created_at": str(row.get("created_at") or "").strip(),
+            }
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "conversation_id": conversation_id,
+            "messages": messages_payload,
+        }
+    )
+
+
+@login_required
+@require_POST
+def ask_alshival_clear_chat_history(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    conversation_id = str(payload.get("conversation_id") or "").strip() or "default"
+    deleted_count = clear_ask_chat_messages(
+        request.user,
+        conversation_id=conversation_id,
+    )
+    request.session.pop(_ASK_SESSION_GREETING_SESSION_KEY, None)
+    request.session.modified = True
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "conversation_id": conversation_id,
+            "deleted_count": int(deleted_count),
+        }
+    )
 
 
 @login_required
@@ -15741,6 +16712,10 @@ def add_resource_item(request):
                 team_names=created_resource.team_names,
                 actor=request.user,
             )
+            _upsert_resource_kb_after_wiki_mutation(
+                actor=request.user,
+                resource_uuid=created_resource.resource_uuid,
+            )
         try:
             check_health(resource_id, user=request.user)
         except Exception:
@@ -15819,6 +16794,10 @@ def edit_resource_item(request, resource_id: int):
                 scope=updated_resource.access_scope,
                 team_names=updated_resource.team_names,
                 actor=request.user,
+            )
+            _upsert_resource_kb_after_wiki_mutation(
+                actor=request.user,
+                resource_uuid=updated_resource.resource_uuid,
             )
 
     next_url = str(request.POST.get("next") or "").strip()

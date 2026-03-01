@@ -67,6 +67,7 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
 - React (build): `cd frontend && npm run build`
 - Reminder worker: `python manage.py run_reminder_worker --interval-seconds 60`
 - Support inbox worker: `python manage.py run_support_inbox_worker --interval-seconds 60`
+- GitHub wiki sync worker: `python manage.py run_github_wiki_sync_worker --interval-seconds 3600`
 
 ## Routine Docker Build Cleanup (Safe)
 - Goal: reclaim Docker build/cache/image garbage without deleting app user data in `var/`.
@@ -101,6 +102,8 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
 - `/accounts/github/login/` GitHub OAuth login (allauth)
 - `/u/<username>/resources/<uuid>/` User-scoped resource detail route
 - `/team/<team_name>/resources/<uuid>/` Team-scoped resource detail route
+- `/u/<username>/resources/<uuid>/wiki/sync/` Manual resource wiki sync (POST)
+- `/team/<team_name>/resources/<uuid>/wiki/sync/` Manual team resource wiki sync (POST)
 
 ## Initial Setup Flow
 - Setup UI is implemented in `dashboard/templates/pages/setup_welcome.html`.
@@ -124,7 +127,8 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
   - Test flow action: `setup_action=test_microsoft` redirects to Microsoft login
 - GitHub:
   - Provider id: `github`
-  - Saved settings include sign-in scopes in `SocialApp.settings` (`read:user`, `user:email`)
+  - Saved settings include sign-in scopes in `SocialApp.settings` (`read:user`, `user:email`, `read:org`, `repo`)
+  - `repo` scope is required for GitHub wiki read/write sync operations.
   - Test flow action: `setup_action=test_github` redirects to GitHub login
 
 ## Domain and URL Behavior
@@ -139,7 +143,7 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
 ## Branding Guidelines
 - Brand name: always use `Alshival` (capital A, lowercase remainder).
 - Wordmark style: the stylized `Alshival` wordmark (provided by logo assets) is the primary brand mark.
-- Preferred logo asset for UI wordmark placements: `dashboard/static/img/branding/alshival-logo-469x317.png`.
+- Preferred logo asset for UI wordmark placements: `dashboard/static/img/branding/alshival-logo-276x186.png`.
 - Icon/square logo asset for compact contexts (favicon, small chips): `dashboard/static/img/branding/alshival-logo-256x256.png`.
 - Large/source logo asset: `dashboard/static/img/branding/alshival-logo-1536x1024.png`.
 - Do not reintroduce legacy `Fefe` naming in user-facing text, defaults, email templates, or UI labels.
@@ -318,12 +322,19 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
   - Implemented in `dashboard/health.py::_log_health_transition` and triggered by `emit_transition_log=True`.
   - Log metadata includes source (`run_resource_health_worker`), method, target, previous/current status, latency, packet loss, and error.
 
-### Team KB Duplication (Alpha Temporary Behavior)
-- For team-owned resources, health knowledge documents are written into each active team member's personal KB (`var/user_data/<user>/knowledge.db`) instead of relying on a team KB search path.
-- This is a temporary alpha strategy to simplify agent retrieval with user-scoped access.
-- Known tradeoff: duplicated vectors/documents across members increases storage.
-- Team `knowledge.db` stores are considered inactive in this mode and are pruned during knowledge cleanup.
-- TODO: move to non-duplicated team-shared retrieval/federated search and remove per-member duplication.
+### Team + Shared Resource KB Fanout (Alpha Temporary Behavior)
+- `search_kb` reads from the actor's personal KB (`var/user_data/<user>/knowledge.db`) plus global KB; there is no active team KB query path.
+- Resource health knowledge is always upserted to the resource package-local KB (`.../resources/<resource_uuid>/knowledge.db`) first.
+- Fanout to member personal KBs happens when resource access is team-shared:
+  - team-owned resources (`owner_scope=team`) fan out to all active members of the owner team.
+  - user-owned resources with `ResourceTeamShare` fan out to all active users in the shared teams.
+- Non-shared user-owned resources remain in the owner's personal KB path.
+- Team `knowledge.db` stores are inactive in this mode and are pruned during knowledge cleanup.
+- Cleanup keeps per-user shared entries by including both:
+  - team-owned resources from the user's team memberships.
+  - resources shared to the user's teams via `ResourceTeamShare`.
+- Known tradeoff: duplicated vectors/documents across member KBs increase storage.
+- TODO: move to non-duplicated team-shared retrieval/federated search and remove per-member fanout duplication.
 
 ### Resource API Keys Card Behavior
 - API keys list now stretches to fill available card space:
@@ -380,6 +391,36 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
 - This exclusion exists in both:
   - `dashboard/views.py::_tool_search_kb_for_actor`
   - `mcp/app.py::_workspace_wiki_results_for_actor`
+
+### Resource Wiki <-> GitHub Wiki Sync (2026-03)
+- Resource wiki pages can be linked to GitHub repositories via `resource_metadata.github_repositories` (multi-select on resource add/edit forms).
+- Sync service:
+  - `dashboard/github_wiki_sync_service.py`
+  - Entry point: `sync_resource_wiki_with_github(...)`
+- Repository selection behavior:
+  - Current sync uses the first linked repository as the canonical wiki upstream.
+  - GitHub wiki remote target is `https://github.com/<owner>/<repo>.wiki.git`.
+- Transport behavior:
+  - Pull and push use git operations (`clone`, `fetch`, `pull --ff-only`, `push`), not REST `repos/<repo>.wiki` content endpoints.
+  - This requires `git` in the app image (`Dockerfile` installs it for web + worker services).
+- Automatic push on front-end wiki mutations:
+  - `resource_wiki_create_page` (published pages only)
+  - `resource_wiki_update_page` (handles publish, draft transitions, and path renames)
+  - `resource_wiki_delete_page`
+  - All three keep local save/delete as source-of-truth and show warnings if remote sync fails.
+- Manual sync:
+  - UI button: `Sync Wiki` in `dashboard/templates/pages/wiki.html`
+  - Endpoints:
+    - `POST /u/<username>/resources/<uuid>/wiki/sync/`
+    - `POST /team/<team_name>/resources/<uuid>/wiki/sync/`
+  - Behavior: pull remote markdown pages into local `WikiPage` rows, then push local published pages back to GitHub wiki.
+- Hourly background pull worker:
+  - Command: `python manage.py run_github_wiki_sync_worker --interval-seconds 3600`
+  - File: `dashboard/management/commands/run_github_wiki_sync_worker.py`
+  - Default mode pulls remote GitHub wiki content into local resource wiki cache (`push_changes=False`).
+- Compose services:
+  - `docker-compose.yml`: `github-wiki-worker`
+  - `docker-compose.dev.yml`: `github-wiki-worker`
 
 ### User Records in Global Chroma
 - Dedicated collection:

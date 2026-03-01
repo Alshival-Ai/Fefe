@@ -6,6 +6,8 @@
 
   const plannerRoot = dashboard.querySelector('[data-overview-planner]');
   const isSuperuser = dashboard.getAttribute('data-superuser') === '1';
+  const isStaff = dashboard.getAttribute('data-staff') === '1';
+  const canAssignAsana = isSuperuser || isStaff;
 
   const getCookie = (name) => {
     const cookieString = document.cookie || '';
@@ -47,11 +49,19 @@
   const asanaAssignUrlTemplate = dashboard.getAttribute('data-asana-assign-url-template') || '';
   const asanaWorkspaceMembersUrlTemplate = dashboard.getAttribute('data-asana-workspace-members-url-template') || '';
   const agendaItemMapUrl = dashboard.getAttribute('data-agenda-item-map-url') || '';
+  const notificationsListUrl = dashboard.getAttribute('data-notification-list-url') || '';
+  const notificationsMarkReadUrl = dashboard.getAttribute('data-notification-mark-read-url') || '';
+  const notificationsClearUrl = dashboard.getAttribute('data-notification-clear-url') || '';
   const completedWindowDays = Math.max(
     1,
     Math.min(90, Number.parseInt(String(dashboard.getAttribute('data-asana-completed-window-days') || '30'), 10) || 30)
   );
   const plannerStorageKey = 'overview_planner_items';
+  const overviewAlertCard = dashboard.querySelector('[data-overview-alert-card]');
+  const overviewAlertList = dashboard.querySelector('[data-overview-alert-list]');
+  const overviewAlertUnread = dashboard.querySelector('[data-overview-alert-unread]');
+  const overviewAlertMarkReadBtn = dashboard.querySelector('[data-overview-alert-mark-read]');
+  const overviewAlertClearBtn = dashboard.querySelector('[data-overview-alert-clear]');
 
   let plannerExternalItems = [];
   let asanaTasks = [];
@@ -77,6 +87,172 @@
   };
 
   const normalizeUuid = (value) => String(value || '').trim().toLowerCase();
+
+  const formatWhen = (value) => {
+    if (!value) return '';
+    const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+    const parsed = new Date(normalized.endsWith('Z') ? normalized : `${normalized}Z`);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+    try {
+      return new Intl.DateTimeFormat([], {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(parsed);
+    } catch (error) {
+      return parsed.toLocaleString();
+    }
+  };
+
+  const levelTone = (level) => {
+    const normalized = String(level || 'info').trim().toLowerCase();
+    if (normalized === 'critical' || normalized === 'error') return 'error';
+    if (normalized === 'warning' || normalized === 'warn' || normalized === 'alert') return 'warning';
+    return 'info';
+  };
+
+  const channelLabel = (channel) => {
+    const normalized = String(channel || 'app').trim().toLowerCase();
+    if (normalized === 'sms') return 'SMS';
+    if (normalized === 'email') return 'Email';
+    return 'In-app';
+  };
+
+  const setOverviewUnread = (value) => {
+    if (!overviewAlertUnread) return;
+    const count = Number.isFinite(value) ? Math.max(0, value) : 0;
+    overviewAlertUnread.textContent = String(count);
+  };
+
+  const clearOverviewAlertRows = () => {
+    if (!overviewAlertList) return;
+    while (overviewAlertList.firstChild) {
+      overviewAlertList.removeChild(overviewAlertList.firstChild);
+    }
+  };
+
+  const renderOverviewAlertEmpty = (message) => {
+    if (!overviewAlertList) return;
+    clearOverviewAlertRows();
+    const emptyNode = document.createElement('p');
+    emptyNode.className = 'text-muted';
+    emptyNode.textContent = message;
+    overviewAlertList.appendChild(emptyNode);
+  };
+
+  const renderOverviewAlertRows = (items) => {
+    if (!overviewAlertList) return;
+    clearOverviewAlertRows();
+    if (!Array.isArray(items) || items.length === 0) {
+      renderOverviewAlertEmpty('No alert notifications yet. New alerts and warnings will surface here.');
+      return;
+    }
+    items.forEach((item) => {
+      const row = document.createElement('article');
+      row.className = 'overview-alert-row';
+
+      const dot = document.createElement('span');
+      dot.className = `overview-dot overview-dot-${levelTone(item && item.level)}`;
+      row.appendChild(dot);
+
+      const copy = document.createElement('div');
+      copy.className = 'overview-alert-copy';
+
+      const title = document.createElement('strong');
+      title.textContent = String(item && item.title ? item.title : 'Notification').trim();
+      copy.appendChild(title);
+
+      const body = String(item && item.body ? item.body : '').trim();
+      if (body) {
+        const bodyNode = document.createElement('p');
+        bodyNode.textContent = body;
+        copy.appendChild(bodyNode);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'overview-alert-meta';
+
+      const channel = document.createElement('span');
+      channel.textContent = channelLabel(item && item.channel);
+      meta.appendChild(channel);
+
+      const time = document.createElement('span');
+      time.textContent = formatWhen(String(item && item.created_at ? item.created_at : ''));
+      meta.appendChild(time);
+
+      const detailUrl = String(item && item.detail_url ? item.detail_url : '').trim();
+      if (detailUrl) {
+        const resourceLink = document.createElement('a');
+        resourceLink.className = 'overview-resource-link';
+        resourceLink.href = detailUrl;
+        resourceLink.textContent = 'Open resource';
+        meta.appendChild(resourceLink);
+      }
+
+      copy.appendChild(meta);
+      row.appendChild(copy);
+      overviewAlertList.appendChild(row);
+    });
+  };
+
+  const loadOverviewNotifications = async () => {
+    if (!notificationsListUrl || !overviewAlertList) return;
+    try {
+      const response = await fetch(`${notificationsListUrl}?limit=12`, {
+        method: 'GET',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        throw new Error(`notification_fetch_${response.status}`);
+      }
+      const payload = await response.json();
+      const unread = Number(payload && payload.unread_count ? payload.unread_count : 0);
+      const items = payload && payload.items ? payload.items : [];
+      setOverviewUnread(unread);
+      renderOverviewAlertRows(items);
+    } catch (error) {
+      renderOverviewAlertEmpty('Unable to load notifications right now.');
+    }
+  };
+
+  const markOverviewNotificationsRead = async () => {
+    if (!notificationsMarkReadUrl) return;
+    try {
+      const response = await fetch(notificationsMarkReadUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'X-CSRFToken': getCookie('csrftoken'),
+        },
+      });
+      if (!response.ok) return;
+      setOverviewUnread(0);
+      await loadOverviewNotifications();
+    } catch (error) {
+      // Keep page usable on transient failures.
+    }
+  };
+
+  const clearOverviewNotifications = async () => {
+    if (!notificationsClearUrl) return;
+    try {
+      const response = await fetch(notificationsClearUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'X-CSRFToken': getCookie('csrftoken'),
+        },
+      });
+      if (!response.ok) return;
+      setOverviewUnread(0);
+      renderOverviewAlertEmpty('No alert notifications yet. New alerts and warnings will surface here.');
+    } catch (error) {
+      // Keep page usable on transient failures.
+    }
+  };
 
   const normalizeUuidList = (values) => {
     if (!Array.isArray(values)) return [];
@@ -899,10 +1075,10 @@
       || ''
     ).trim();
     let assigneeSelect = null;
-    if (isSuperuser) {
+    if (canAssignAsana) {
       const assigneeField = document.createElement('label');
       const assigneeLabel = document.createElement('span');
-      assigneeLabel.textContent = 'Assignee (superuser only)';
+      assigneeLabel.textContent = 'Assignee (staff only)';
       assigneeField.appendChild(assigneeLabel);
 
       assigneeSelect = document.createElement('select');
@@ -957,7 +1133,7 @@
       const dueTime = String(dueTimeInput && dueTimeInput.value ? dueTimeInput.value : '').trim();
       const notes = String(notesInput && notesInput.value ? notesInput.value : '').trim();
       const assigneeGid = String(
-        isSuperuser && assigneeSelect && !assigneeSelect.disabled && assigneeSelect.value
+        canAssignAsana && assigneeSelect && !assigneeSelect.disabled && assigneeSelect.value
           ? assigneeSelect.value
           : ''
       ).trim();
@@ -1335,65 +1511,69 @@
     assigneeLabel.textContent = 'Assignee:';
     const assigneeCell = document.createElement('span');
 
-    const assigneeBtn = document.createElement('button');
-    assigneeBtn.type = 'button';
-    assigneeBtn.className = 'task-drawer__assignee-btn';
-    assigneeBtn.textContent = String(taskRow.assignee_name || 'Unassigned').trim();
-    let membersCache = null;
-    assigneeBtn.addEventListener('click', async () => {
-      assigneeBtn.disabled = true;
-      try {
-        if (!membersCache) {
-          const membersUrl = asanaWorkspaceMembersUrlForWorkspace(workspaceGid);
-          if (membersUrl) {
-            const payload = await fetchJson(membersUrl);
-            membersCache = Array.isArray(payload.members) ? payload.members : [];
-          } else {
-            membersCache = [];
-          }
-        }
-        const select = document.createElement('select');
-        select.className = 'task-drawer__assignee-select';
-        const unassignedOpt = document.createElement('option');
-        unassignedOpt.value = '';
-        unassignedOpt.textContent = '— Unassigned —';
-        select.appendChild(unassignedOpt);
-        membersCache.forEach((member) => {
-          const opt = document.createElement('option');
-          opt.value = String(member.gid || '').trim();
-          opt.textContent = String(member.name || member.email || member.gid).trim();
-          if (opt.value === String(taskRow.assignee_gid || '').trim()) opt.selected = true;
-          select.appendChild(opt);
-        });
-        select.addEventListener('change', async () => {
-          const selectedGid = select.value;
-          const assignUrl = asanaAssignUrlForTask(taskGid);
-          if (!assignUrl) return;
-          select.disabled = true;
-          try {
-            await postJson(assignUrl, { assignee_gid: selectedGid || null });
-            const selectedMember = membersCache.find((m) => String(m.gid || '').trim() === selectedGid);
-            const newName = selectedMember ? String(selectedMember.name || selectedMember.email || '').trim() : '';
-            taskRow.assignee_gid = selectedGid;
-            taskRow.assignee_name = newName;
-            assigneeBtn.textContent = newName || 'Unassigned';
-            assigneeCell.replaceChild(assigneeBtn, select);
-            if (plannerController && typeof plannerController.refresh === 'function') {
-              plannerController.refresh();
+    if (canAssignAsana) {
+      const assigneeBtn = document.createElement('button');
+      assigneeBtn.type = 'button';
+      assigneeBtn.className = 'task-drawer__assignee-btn';
+      assigneeBtn.textContent = String(taskRow.assignee_name || 'Unassigned').trim();
+      let membersCache = null;
+      assigneeBtn.addEventListener('click', async () => {
+        assigneeBtn.disabled = true;
+        try {
+          if (!membersCache) {
+            const membersUrl = asanaWorkspaceMembersUrlForWorkspace(workspaceGid);
+            if (membersUrl) {
+              const payload = await fetchJson(membersUrl);
+              membersCache = Array.isArray(payload.members) ? payload.members : [];
+            } else {
+              membersCache = [];
             }
-          } catch (error) {
-            window.alert(`Unable to update assignee: ${String(error && error.message ? error.message : 'request_failed')}`);
-            select.disabled = false;
           }
-        });
-        assigneeCell.replaceChild(select, assigneeBtn);
-        select.focus();
-      } catch (error) {
-        window.alert(`Unable to load workspace members: ${String(error && error.message ? error.message : 'request_failed')}`);
-        assigneeBtn.disabled = false;
-      }
-    });
-    assigneeCell.appendChild(assigneeBtn);
+          const select = document.createElement('select');
+          select.className = 'task-drawer__assignee-select';
+          const unassignedOpt = document.createElement('option');
+          unassignedOpt.value = '';
+          unassignedOpt.textContent = '— Unassigned —';
+          select.appendChild(unassignedOpt);
+          membersCache.forEach((member) => {
+            const opt = document.createElement('option');
+            opt.value = String(member.gid || '').trim();
+            opt.textContent = String(member.name || member.email || member.gid).trim();
+            if (opt.value === String(taskRow.assignee_gid || '').trim()) opt.selected = true;
+            select.appendChild(opt);
+          });
+          select.addEventListener('change', async () => {
+            const selectedGid = select.value;
+            const assignUrl = asanaAssignUrlForTask(taskGid);
+            if (!assignUrl) return;
+            select.disabled = true;
+            try {
+              await postJson(assignUrl, { assignee_gid: selectedGid || null });
+              const selectedMember = membersCache.find((m) => String(m.gid || '').trim() === selectedGid);
+              const newName = selectedMember ? String(selectedMember.name || selectedMember.email || '').trim() : '';
+              taskRow.assignee_gid = selectedGid;
+              taskRow.assignee_name = newName;
+              assigneeBtn.textContent = newName || 'Unassigned';
+              assigneeCell.replaceChild(assigneeBtn, select);
+              if (plannerController && typeof plannerController.refresh === 'function') {
+                plannerController.refresh();
+              }
+            } catch (error) {
+              window.alert(`Unable to update assignee: ${String(error && error.message ? error.message : 'request_failed')}`);
+              select.disabled = false;
+            }
+          });
+          assigneeCell.replaceChild(select, assigneeBtn);
+          select.focus();
+        } catch (error) {
+          window.alert(`Unable to load workspace members: ${String(error && error.message ? error.message : 'request_failed')}`);
+          assigneeBtn.disabled = false;
+        }
+      });
+      assigneeCell.appendChild(assigneeBtn);
+    } else {
+      assigneeCell.textContent = String(taskRow.assignee_name || 'Unassigned').trim() || 'Unassigned';
+    }
     metaGrid.appendChild(assigneeLabel);
     metaGrid.appendChild(assigneeCell);
 
@@ -2379,6 +2559,22 @@
     if (String(window.location.hash || '') === '#calendar-alerts') {
       openCalendarAlertModal();
     }
+  }
+
+  if (overviewAlertMarkReadBtn) {
+    overviewAlertMarkReadBtn.addEventListener('click', async () => {
+      await markOverviewNotificationsRead();
+    });
+  }
+
+  if (overviewAlertClearBtn) {
+    overviewAlertClearBtn.addEventListener('click', async () => {
+      await clearOverviewNotifications();
+    });
+  }
+
+  if (overviewAlertList && notificationsListUrl) {
+    loadOverviewNotifications();
   }
 
 })();

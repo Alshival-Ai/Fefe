@@ -151,5 +151,5 @@ Public workspace wiki pages indexed into global ChromaDB are excluded from DB fa
 
 ### Branding
 - Always `Alshival` (capital A). Never reintroduce `Fefe` in user-facing text.
-- Wordmark asset: `dashboard/static/img/branding/alshival-logo-469x317.png`
+- Wordmark asset: `dashboard/static/img/branding/alshival-logo-276x186.png`
 - Icon/favicon: `dashboard/static/img/branding/alshival-logo-256x256.png`

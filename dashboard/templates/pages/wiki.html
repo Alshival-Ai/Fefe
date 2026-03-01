@@ -4,14 +4,24 @@
 {% block title %}Wiki{% endblock title %}
 
 {% block page_content %}
-<section class="resources-layout wiki-layout" data-wiki-layout>
+<section
+  class="resources-layout wiki-layout"
+  data-wiki-layout
+  data-wiki-scope-locked="{% if wiki_scope_locked %}1{% else %}0{% endif %}"
+  data-wiki-team-scope="{% if wiki_is_team_scope and not wiki_scope_locked %}1{% else %}0{% endif %}">
   <aside class="team-folder-panel card wiki-sidebar">
     <div class="wiki-sidebar-head">
       <div class="wiki-sidebar-head-copy">
-        <div class="team-folder-title">Wiki Scope</div>
+        <div class="team-folder-title">
+          {% if wiki_scope_locked %}
+          Folders
+          {% else %}
+          Wiki Scope
+          {% endif %}
+        </div>
         <div class="team-folder-subtitle">
           {% if wiki_scope_locked %}
-          This view is pinned to the current resource wiki
+          Browse this resource wiki using the same folder navigation pattern
           {% else %}
           Switch between workspace, team, and resource documentation
           {% endif %}
@@ -32,10 +42,12 @@
       {% if wiki_scope_locked %}
       <input type="hidden" name="scope" value="resource" />
       <input type="hidden" name="resource_uuid" value="{{ wiki_resource_uuid }}" />
+      {% with wiki_resource_label=wiki_resource_name|default:wiki_resource_uuid %}
       <div class="wiki-scope-lock">
         <span class="status info">Resource Wiki</span>
-        <strong>{{ wiki_resource_name|default:wiki_resource_uuid }}</strong>
+        <strong class="wiki-resource-label" title="{{ wiki_resource_label }}">{{ wiki_resource_label|truncatechars:34 }}</strong>
       </div>
+      {% endwith %}
       {% else %}
       <label class="settings-field">
         <span>Scope</span>
@@ -48,10 +60,12 @@
 
       <label class="settings-field wiki-scope-team-field{% if not wiki_is_team_scope %} d-none{% endif %}" data-wiki-scope-team-field>
         <span>Team</span>
-        <select name="team_id" data-wiki-scope-team>
-          <option value="">Select a team</option>
+        <select name="team_id" data-wiki-scope-team{% if not wiki_is_team_scope %} disabled{% endif %}>
+          <option value="">All teams</option>
           {% for item in wiki_team_options %}
-          <option value="{{ item.team_id }}"{% if wiki_team_id == item.team_id %} selected{% endif %}>{{ item.team_name }}</option>
+          <option
+            value="{{ item.team_id }}"
+            {% if wiki_team_id == item.team_id %} selected{% endif %}>{{ item.team_name }}</option>
           {% endfor %}
         </select>
       </label>
@@ -61,7 +75,10 @@
         <select name="resource_uuid" data-wiki-scope-resource>
           <option value="">Select a resource</option>
           {% for item in wiki_resource_options %}
-          <option value="{{ item.resource_uuid }}"{% if wiki_resource_uuid == item.resource_uuid %} selected{% endif %}>{{ item.resource_name }}</option>
+          <option
+            value="{{ item.resource_uuid }}"
+            title="{{ item.resource_name }}"
+            {% if wiki_resource_uuid == item.resource_uuid %} selected{% endif %}>{{ item.resource_name|truncatechars:44 }}</option>
           {% endfor %}
         </select>
       </label>
@@ -71,8 +88,14 @@
 
     <section class="wiki-sidebar-pages">
       <div class="directory-users-toolbar wiki-sidebar-pages-head">
-        <h3>Wiki Navigation</h3>
-        <span class="text-muted small"><span data-wiki-visible-count>{{ wiki_pages|length }}</span> pages</span>
+        <h3>{% if wiki_scope_locked %}Resource Navigation{% else %}Wiki Navigation{% endif %}</h3>
+        <span class="text-muted small">
+          {% if wiki_scope_locked %}
+          By scope
+          {% else %}
+          <span data-wiki-visible-count>{{ wiki_pages|length }}</span> pages
+          {% endif %}
+        </span>
       </div>
       <label class="settings-field wiki-sidebar-search">
         <span>Search</span>
@@ -91,6 +114,8 @@
           data-page-nav-scope="{{ page_item.nav_scope|default:'account' }}"
           data-page-teams="{{ page_item.team_keys|join:'|' }}"
           data-page-team-names="{{ page_item.team_names|join:'|'|escape }}"
+          data-page-nav-team-names="{{ page_item.nav_team_names|join:'|'|escape }}"
+          data-page-nav-wiki-label="{{ page_item.nav_wiki_label|default:''|escape }}"
           data-page-resource-name="{{ page_item.resource_name|default:''|escape }}"
           data-page-resource-uuid="{{ page_item.resource_uuid|default:''|escape }}"></a>
         {% endfor %}
@@ -113,16 +138,30 @@
         <span class="text-muted small">Viewing</span>
         <strong data-wiki-view-label>All Pages</strong>
         <span class="status info">{{ wiki_scope_label }}</span>
-        {% if wiki_is_team_scope %}
+        {% if wiki_is_team_scope and wiki_team_id %}
         <span class="status info">{{ wiki_team_name|default:wiki_team_id }}</span>
         {% endif %}
         {% if wiki_is_resource_scope %}
-        <span class="status warning">{{ wiki_resource_name|default:wiki_resource_uuid }}</span>
+        {% with wiki_resource_label=wiki_resource_name|default:wiki_resource_uuid %}
+        <span class="status warning wiki-resource-chip" title="{{ wiki_resource_label }}">{{ wiki_resource_label|truncatechars:34 }}</span>
+        {% endwith %}
         {% endif %}
       </div>
       <div class="wiki-banner-actions">
         {% if wiki_resource_shell_url %}
         <a class="ghost-btn" href="{{ wiki_resource_shell_url }}">Back to {{ wiki_resource_shell_label|default:'Resource' }}</a>
+        {% endif %}
+        {% if wiki_sync_url %}
+        <form method="post" action="{{ wiki_sync_url }}" class="inline-form">
+          {% csrf_token %}
+          {% if selected_page %}
+          <input type="hidden" name="page" value="{{ selected_page.path }}" />
+          {% endif %}
+          {% if wiki_is_resource_scope and not wiki_scope_locked %}
+          <input type="hidden" name="return_to_scope_wiki" value="1" />
+          {% endif %}
+          <button class="secondary-btn" type="submit">Sync Wiki</button>
+        </form>
         {% endif %}
         <a class="primary-btn" href="{{ wiki_editor_new_url }}">New page</a>
       </div>
@@ -224,17 +263,23 @@
     const noResults = document.querySelector('[data-wiki-no-results]');
     const visibleCount = document.querySelector('[data-wiki-visible-count]');
     const wikiLayout = document.querySelector('[data-wiki-layout]');
+    let scopeTeamSelect = null;
     const sidebarToggle = document.querySelector('[data-wiki-sidebar-toggle]');
     const sidebarOpen = document.querySelector('[data-wiki-sidebar-open]');
     const sidebarStorageKey = 'alshival.wiki.sidebar-collapsed';
     const sidebarQuery = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 980px)') : null;
     const normalizeText = (value) => String(value || '').trim();
+    const lockedScopeView = wikiLayout && wikiLayout.getAttribute('data-wiki-scope-locked') === '1';
+    const teamScopeView = wikiLayout && wikiLayout.getAttribute('data-wiki-team-scope') === '1';
 
     const sourcePages = pageRows
       .map((row) => {
         const title = normalizeText(row.getAttribute('data-page-title'));
         const path = normalizeText(row.getAttribute('data-page-path'));
         const teamNames = parseList(row.getAttribute('data-page-team-names'));
+        const navTeamNames = parseList(row.getAttribute('data-page-nav-team-names'));
+        const navWikiLabel = normalizeText(row.getAttribute('data-page-nav-wiki-label'));
+        const resourceName = normalizeText(row.getAttribute('data-page-resource-name'));
         let navScope = normalizeText(row.getAttribute('data-page-nav-scope')).toLowerCase();
         if (!['account', 'team', 'global'].includes(navScope)) {
           navScope = 'account';
@@ -247,6 +292,9 @@
           isDraft: row.getAttribute('data-page-is-draft') === '1',
           navScope,
           teamNames,
+          navTeamNames,
+          navWikiLabel: navWikiLabel || (resourceName || 'Wiki'),
+          resourceName,
           isActive: row.classList.contains('is-active'),
         };
       })
@@ -421,6 +469,53 @@
       ];
     };
 
+    const createTeamWikiLevel = (items) => {
+      const fragment = document.createDocumentFragment();
+      const wikiBuckets = new Map();
+      let hasActive = false;
+
+      items.forEach((item) => {
+        const wikiLabel = normalizeText(item.navWikiLabel) || 'Wiki';
+        if (!wikiBuckets.has(wikiLabel)) wikiBuckets.set(wikiLabel, []);
+        wikiBuckets.get(wikiLabel).push(item);
+      });
+
+      Array.from(wikiBuckets.keys())
+        .sort((a, b) => a.localeCompare(b))
+        .forEach((wikiLabel) => {
+          const wikiItems = wikiBuckets.get(wikiLabel) || [];
+          const details = document.createElement('details');
+          details.className = 'wiki-tree-node wiki-tree-node--folder';
+
+          const summary = document.createElement('summary');
+          summary.className = 'wiki-tree-node__summary';
+          summary.innerHTML = `
+            <span class="folder-icon" aria-hidden="true">DIR</span>
+            <span class="wiki-tree-node__label"></span>
+            <span class="wiki-tree-node__count"></span>
+          `;
+          const label = summary.querySelector('.wiki-tree-node__label');
+          if (label) label.textContent = wikiLabel;
+          const count = summary.querySelector('.wiki-tree-node__count');
+          if (count) count.textContent = String(wikiItems.length);
+          details.appendChild(summary);
+
+          const childWrap = document.createElement('div');
+          childWrap.className = 'wiki-tree-node__children';
+          const childTree = createTreeLevel(wikiItems, 0);
+          childWrap.appendChild(childTree.fragment);
+          details.appendChild(childWrap);
+
+          if (childTree.hasActive) {
+            details.open = true;
+            hasActive = true;
+          }
+          fragment.appendChild(details);
+        });
+
+      return { fragment, hasActive };
+    };
+
     const renderWikiTree = () => {
       if (!treeRoot) return;
       while (treeRoot.firstChild) treeRoot.removeChild(treeRoot.firstChild);
@@ -428,10 +523,115 @@
       const term = normalizeText(searchInput && searchInput.value).toLowerCase();
       const filteredPages = sourcePages.filter((item) => {
         if (!term) return true;
-        const haystack = [item.title, item.path, item.teamNames.join(' ')].join(' ').toLowerCase();
+        const haystack = [
+          item.title,
+          item.path,
+          item.teamNames.join(' '),
+          item.navTeamNames.join(' '),
+          item.navWikiLabel,
+          item.resourceName,
+        ]
+          .join(' ')
+          .toLowerCase();
         return haystack.includes(term);
       });
       if (visibleCount) visibleCount.textContent = String(filteredPages.length);
+
+      if (teamScopeView) {
+        const teamOptions = scopeTeamSelect
+          ? Array.from(scopeTeamSelect.options || [])
+              .filter((option) => normalizeText(option.value))
+              .map((option) => normalizeText(option.textContent))
+              .filter(Boolean)
+          : [];
+        const activeTeamValue = scopeTeamSelect ? normalizeText(scopeTeamSelect.value) : '';
+        const activeTeamLabel = scopeTeamSelect && activeTeamValue
+          ? normalizeText((scopeTeamSelect.options[scopeTeamSelect.selectedIndex] || {}).textContent)
+          : '';
+        const teamBuckets = new Map();
+        if (activeTeamLabel) {
+          teamBuckets.set(activeTeamLabel, []);
+        } else if (!term) {
+          teamOptions.forEach((teamName) => {
+            if (!teamBuckets.has(teamName)) teamBuckets.set(teamName, []);
+          });
+        }
+        filteredPages.forEach((item) => {
+          const teams = item.navTeamNames.length ? item.navTeamNames : ['Unassigned'];
+          teams.forEach((teamName) => {
+            if (!teamBuckets.has(teamName)) teamBuckets.set(teamName, []);
+            teamBuckets.get(teamName).push(item);
+          });
+        });
+        if (noResults) {
+          noResults.classList.toggle('d-none', teamBuckets.size > 0);
+        }
+        if (!teamBuckets.size) {
+          if (folderViewLabel) folderViewLabel.textContent = 'No pages';
+          return;
+        }
+
+        let firstTeamLabel = '';
+        let selectedTeamLabel = '';
+        let openedTeam = false;
+        Array.from(teamBuckets.keys())
+          .sort((a, b) => a.localeCompare(b))
+          .forEach((teamName) => {
+            const teamItems = teamBuckets.get(teamName) || [];
+            if (!firstTeamLabel && teamItems.length) firstTeamLabel = teamName;
+
+            const details = document.createElement('details');
+            details.className = 'wiki-tree-node wiki-tree-node--top wiki-tree-node--folder';
+            if (!openedTeam && teamItems.length) {
+              details.open = true;
+              openedTeam = true;
+            }
+
+            const summary = document.createElement('summary');
+            summary.className = 'wiki-tree-node__summary';
+            summary.innerHTML = `
+              <span class="folder-icon" aria-hidden="true">DIR</span>
+              <span class="wiki-tree-node__label"></span>
+              <span class="wiki-tree-node__count"></span>
+            `;
+            const label = summary.querySelector('.wiki-tree-node__label');
+            if (label) label.textContent = teamName;
+            const count = summary.querySelector('.wiki-tree-node__count');
+            if (count) count.textContent = String(teamItems.length);
+            details.appendChild(summary);
+
+            const children = document.createElement('div');
+            children.className = 'wiki-tree-node__children';
+            const teamTree = createTeamWikiLevel(teamItems);
+            if (teamItems.length) {
+              children.appendChild(teamTree.fragment);
+            } else {
+              const empty = document.createElement('div');
+              empty.className = 'text-muted small';
+              empty.textContent = 'No pages in this team wiki.';
+              children.appendChild(empty);
+            }
+            details.appendChild(children);
+
+            if (teamTree.hasActive) {
+              details.open = true;
+              selectedTeamLabel = teamName;
+              openedTeam = true;
+            }
+
+            details.addEventListener('toggle', () => {
+              if (!details.open) return;
+              if (folderViewLabel) folderViewLabel.textContent = teamName;
+            });
+            treeRoot.appendChild(details);
+          });
+
+        if (folderViewLabel) {
+          folderViewLabel.textContent = selectedTeamLabel || firstTeamLabel || 'Teams';
+        }
+        return;
+      }
+
       if (noResults) {
         noResults.classList.toggle('d-none', filteredPages.length > 0);
       }
@@ -448,11 +648,11 @@
       let activeVisibleLabel = '';
       let openedSection = false;
 
-      sectionBuckets.forEach(({ section, items }) => {
+      const buildSectionNode = ({ section, items }) => {
         if (!firstVisibleLabel && items.length) firstVisibleLabel = section.label;
 
         const details = document.createElement('details');
-        details.className = 'wiki-tree-node wiki-tree-node--top';
+        details.className = `wiki-tree-node wiki-tree-node--top${lockedScopeView ? ' wiki-tree-node--folder' : ''}`;
         if (!openedSection && items.length) {
           details.open = true;
           openedSection = true;
@@ -495,24 +695,53 @@
           if (!details.open) return;
           if (folderViewLabel) folderViewLabel.textContent = section.label;
         });
+        return details;
+      };
 
-        treeRoot.appendChild(details);
-      });
+      if (lockedScopeView) {
+        const scopesNode = document.createElement('details');
+        scopesNode.className = 'wiki-tree-node wiki-tree-node--top wiki-tree-node--folder';
+        scopesNode.open = true;
+
+        const scopesSummary = document.createElement('summary');
+        scopesSummary.className = 'wiki-tree-node__summary';
+        scopesSummary.innerHTML = `
+          <span class="folder-icon" aria-hidden="true">DIR</span>
+          <span class="wiki-tree-node__label">Scopes</span>
+          <span class="wiki-tree-node__count">3</span>
+        `;
+        scopesNode.appendChild(scopesSummary);
+
+        const scopesChildren = document.createElement('div');
+        scopesChildren.className = 'wiki-tree-node__children';
+        sectionBuckets.forEach((bucket) => {
+          scopesChildren.appendChild(buildSectionNode(bucket));
+        });
+        scopesNode.appendChild(scopesChildren);
+        treeRoot.appendChild(scopesNode);
+      } else {
+        sectionBuckets.forEach((bucket) => {
+          treeRoot.appendChild(buildSectionNode(bucket));
+        });
+      }
 
       if (folderViewLabel) {
-        folderViewLabel.textContent = activeVisibleLabel || firstVisibleLabel || 'Wiki Navigation';
+        if (lockedScopeView) {
+          folderViewLabel.textContent = 'Scopes';
+        } else {
+          folderViewLabel.textContent = activeVisibleLabel || firstVisibleLabel || 'Wiki Navigation';
+        }
       }
     };
 
     if (searchInput) {
       searchInput.addEventListener('input', renderWikiTree);
     }
-    renderWikiTree();
 
     const scopeForm = document.querySelector('[data-wiki-scope-form]');
     const scopeSelect = document.querySelector('[data-wiki-scope-select]');
     const scopeTeamField = document.querySelector('[data-wiki-scope-team-field]');
-    const scopeTeamSelect = document.querySelector('[data-wiki-scope-team]');
+    scopeTeamSelect = document.querySelector('[data-wiki-scope-team]');
     const scopeResourceField = document.querySelector('[data-wiki-scope-resource-field]');
     const scopeResourceSelect = document.querySelector('[data-wiki-scope-resource]');
 
@@ -527,12 +756,13 @@
 
     const applyScopeFieldState = () => {
       if (!scopeSelect) return;
-      const isTeam = (scopeSelect.value || '') === 'team';
-      const isResource = (scopeSelect.value || '') === 'resource';
+      const selectedScope = (scopeSelect.value || '');
+      const isTeam = selectedScope === 'team';
+      const isResource = selectedScope === 'resource';
       if (scopeTeamField && scopeTeamSelect) {
         scopeTeamField.classList.toggle('d-none', !isTeam);
         scopeTeamSelect.disabled = !isTeam;
-        scopeTeamSelect.required = isTeam;
+        scopeTeamSelect.required = false;
       }
       if (scopeResourceField && scopeResourceSelect) {
         scopeResourceField.classList.toggle('d-none', !isResource);
@@ -562,8 +792,8 @@
         }
       });
     }
-
     applyScopeFieldState();
+    renderWikiTree();
   })();
 </script>
 {% endblock page_content %}

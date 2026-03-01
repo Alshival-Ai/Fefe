@@ -27,6 +27,8 @@
           {% if resource.resource_type == 'vm' and resource.ssh_key_present %}
           <button type="button" class="gradient-btn detail-connect-btn" data-ssh-toggle data-resource-id="{{ resource.id }}" data-resource-uuid="{{ resource.resource_uuid }}">Connect</button>
           {% endif %}
+        </div>
+        <div class="detail-env-row">
           <button
             type="button"
             class="ghost-btn detail-resource-env-btn"
@@ -34,11 +36,17 @@
             ALSHIVAL_RESOURCE=<span>{{ resource_url }}</span>
           </button>
         </div>
-        <div class="text-muted">{{ resource.resource_type|title }}</div>
+        <div class="text-muted detail-resource-type">{{ resource.resource_type|title }}</div>
       </div>
     </div>
     <div class="detail-actions">
-      <a class="ghost-btn" href="{{ resource_wiki_url }}">Resource Wiki</a>
+      <a class="ghost-btn detail-wiki-btn" href="{{ resource_wiki_url }}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2" />
+        </svg>
+        <span>Open Wiki</span>
+      </a>
+      <div class="detail-actions-icons">
       {% if can_manage_resource %}
       <button
         class="icon-btn detail-edit-btn"
@@ -55,6 +63,7 @@
         data-resource-db-type="{{ resource.db_type|escape }}"
         data-resource-healthcheck-url="{{ resource.healthcheck_url|escape }}"
         data-resource-notes="{{ resource.notes|escape }}"
+        data-resource-github-repos="{% for repo_name in resource_github_repository_names %}{% if not forloop.first %},{% endif %}{{ repo_name|escape }}{% endfor %}"
         data-resource-scope="{{ resource.access_scope }}"
         data-resource-team-names="{% for team_name in resource.team_names %}{% if not forloop.first %},{% endif %}{{ team_name|escape }}{% endfor %}"
         data-resource-ssh-key-name="{{ resource.ssh_key_name|escape }}"
@@ -63,7 +72,9 @@
         data-resource-ssh-credential-id="{{ resource.ssh_credential_id|escape }}"
         data-resource-ssh-credential-scope="{{ resource.ssh_credential_scope|escape }}"
         data-resource-ssh-port="{{ resource.ssh_port|escape }}">
-        ✎
+        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20h9M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1l1-4z" />
+        </svg>
       </button>
       {% endif %}
       <button
@@ -88,6 +99,7 @@
           <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4a2 2 0 0 1-.6-1.4V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 0 1-6 0" />
         </svg>
       </button>
+      </div>
     </div>
   </div>
 
@@ -123,6 +135,20 @@
         <div class="overview-meta-item">
           <span class="text-muted small">Created</span>
           <span class="overview-meta-value">{{ created_display }}</span>
+        </div>
+        <div class="overview-meta-item">
+          <span class="text-muted small">GitHub repositories</span>
+          {% if resource_github_repositories %}
+          <div>
+            {% for repo in resource_github_repositories %}
+            <div>
+              <a class="resource-link" href="{{ repo.html_url }}" target="_blank" rel="noopener noreferrer">{{ repo.full_name }}</a>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <span class="overview-meta-value">None linked</span>
+          {% endif %}
         </div>
       </div>
       <div class="health-chart-wrap d-none" data-health-chart-wrap>
@@ -728,6 +754,27 @@
           <span>Notes</span>
           <textarea name="notes" rows="3"></textarea>
         </label>
+        <label>
+          <span>GitHub repositories</span>
+          <select name="github_repositories" multiple size="6">
+            {% for repo in github_repo_options %}
+            <option value="{{ repo.full_name|escape }}">
+              {{ repo.full_name }}{% if repo.private %} (Private){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>GitHub repositories (manual)</span>
+          <textarea
+            name="github_repositories_manual"
+            rows="2"
+            placeholder="org/repo-one, org/repo-two"></textarea>
+        </label>
+        <div class="text-muted small">Use manual entries when org repos are not listed yet.</div>
+        {% if github_repo_error %}
+        <div class="text-muted small">{{ github_repo_error }}</div>
+        {% endif %}
         <label>
           <span>Access scope</span>
           <select name="resource_scope">
@@ -1468,6 +1515,29 @@
         Array.from(teamSelect.options).forEach((option) => { option.selected = false; });
       }
     };
+    const parseRepoNames = (rawValue) => String(rawValue || '')
+      .split(',')
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const applyGithubRepoSelection = (selectEl, repoNames) => {
+      if (!selectEl) return;
+      const normalized = Array.isArray(repoNames)
+        ? repoNames.map((value) => String(value || '').trim()).filter(Boolean)
+        : [];
+      const selectedSet = new Set(normalized);
+      const known = new Set(Array.from(selectEl.options).map((option) => String(option.value || '').trim()));
+      normalized.forEach((repoName) => {
+        if (known.has(repoName)) return;
+        const option = document.createElement('option');
+        option.value = repoName;
+        option.textContent = `${repoName} (Saved)`;
+        selectEl.appendChild(option);
+        known.add(repoName);
+      });
+      Array.from(selectEl.options).forEach((option) => {
+        option.selected = selectedSet.has(String(option.value || '').trim());
+      });
+    };
 
     const updateSshKeyStatus = (targetForm, keyName, keyPresent) => {
       if (!targetForm) return;
@@ -1612,6 +1682,7 @@
       }
 
       const resourceScope = openButton.getAttribute('data-resource-scope') || 'account';
+      const githubRepoNames = parseRepoNames(openButton.getAttribute('data-resource-github-repos') || '');
       const resourceTeamNames = (openButton.getAttribute('data-resource-team-names') || '')
         .split(',')
         .map((value) => value.trim())
@@ -1634,6 +1705,8 @@
       const clearKeyInput = form.querySelector('input[name="clear_ssh_key"]');
       const resourceScopeSelect = form.querySelector('select[name="resource_scope"]');
       const resourceTeamSelect = form.querySelector('select[name="resource_team_names"]');
+      const githubRepoSelect = form.querySelector('select[name="github_repositories"]');
+      const githubRepoManualInput = form.querySelector('textarea[name="github_repositories_manual"]');
 
       if (resourceScopeSelect) resourceScopeSelect.value = resourceScope;
       if (resourceTeamSelect) {
@@ -1641,6 +1714,8 @@
           option.selected = resourceTeamNames.includes(option.value);
         });
       }
+      applyGithubRepoSelection(githubRepoSelect, githubRepoNames);
+      if (githubRepoManualInput) githubRepoManualInput.value = githubRepoNames.join('\n');
       if (sshKeyNameInput) sshKeyNameInput.value = sshKeyName;
       if (sshUsernameInput) sshUsernameInput.value = sshUsername;
       if (sshPortInput) sshPortInput.value = sshPort || '22';

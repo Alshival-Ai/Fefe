@@ -8,6 +8,7 @@
   class="overview-dashboard overview-dashboard--full"
   data-overview-dashboard
   data-superuser="{% if request.user.is_superuser %}1{% else %}0{% endif %}"
+  data-staff="{% if request.user.is_staff %}1{% else %}0{% endif %}"
   data-asana-complete-url-template="{% url 'update_asana_task_completion' task_gid='__TASK_GID__' %}"
   data-asana-board-task-create-url-template="{% url 'create_asana_board_task' board_gid='__BOARD_GID__' %}"
   data-asana-task-delete-url-template="{% url 'delete_asana_task' task_gid='__TASK_GID__' %}"
@@ -25,43 +26,99 @@
   data-asana-assign-url-template="{% url 'update_asana_task_assignee' task_gid='__TASK_GID__' %}"
   data-asana-workspace-members-url-template="{% url 'list_asana_workspace_members' workspace_gid='__WORKSPACE_GID__' %}"
   data-agenda-item-map-url="{% url 'update_overview_agenda_item_resource_mapping' %}"
+  data-notification-list-url="{% url 'notifications_feed' %}"
+  data-notification-mark-read-url="{% url 'notifications_mark_all_read' %}"
+  data-notification-clear-url="{% url 'notifications_clear_all' %}"
   data-asana-completed-window-days="{{ asana_completed_window_days }}">
   <div class="overview-main">
-    <article class="card overview-intro">
-      <div>
-        <h2>Operational Overview</h2>
-        <p>Workspace status, upcoming tasks, and operational follow-ups.</p>
-      </div>
-      <div class="overview-intro-meta">
-        <span class="tag">Updated {{ dashboard_generated_display }}</span>
-        <span class="tag">24h metrics</span>
-      </div>
-    </article>
+    <section class="overview-panels overview-panels--health-rail">
+      <aside class="overview-health-rail" aria-label="Health and alert summary">
+        <article class="card overview-health-rail-card">
+          <div class="overview-panel-head">
+            <div>
+              <h3>Health Watch</h3>
+              <p class="text-muted small">Degraded resources and high-error services surfaced first.</p>
+            </div>
+            <span class="status {% if alerts_open %}warning{% else %}success{% endif %}">
+              {% if alerts_open %}{{ alerts_open }} open{% else %}Stable{% endif %}
+            </span>
+          </div>
+          <div class="overview-health-kpis">
+            <div class="overview-health-kpi">
+              <span>Resources</span>
+              <strong>{{ resources_total }}</strong>
+            </div>
+            <div class="overview-health-kpi">
+              <span>Healthy</span>
+              <strong>{{ healthy_resources }}</strong>
+            </div>
+            <div class="overview-health-kpi">
+              <span>Reliability</span>
+              <strong>{{ reliability_pct }}%</strong>
+            </div>
+            <div class="overview-health-kpi">
+              <span>24h checks</span>
+              <strong>{{ checks_total_24h }}</strong>
+            </div>
+          </div>
+          <div class="overview-health-list">
+            {% for row in attention_rows %}
+            <a class="overview-health-item" href="{{ row.detail_url }}">
+              <div>
+                <strong>{{ row.name }}</strong>
+                <p class="text-muted small">
+                  {% if row.last_error %}
+                  {{ row.last_error|truncatechars:120 }}
+                  {% else %}
+                  {{ row.error_logs_24h }} error logs in the last 24h.
+                  {% endif %}
+                </p>
+              </div>
+              <span class="status {{ row.status_tone }}">{{ row.status_label }}</span>
+            </a>
+            {% empty %}
+            <p class="text-muted">No degraded resources right now. Everything currently monitored is healthy.</p>
+            {% endfor %}
+          </div>
+        </article>
 
-    <section class="overview-kpis">
-      <article class="card overview-kpi">
-        <span class="overview-kpi-label">Resources</span>
-        <strong class="overview-kpi-value">{{ resources_total }}</strong>
-        <span class="overview-kpi-meta">{{ healthy_resources }} healthy</span>
-      </article>
-      <article class="card overview-kpi">
-        <span class="overview-kpi-label">Reliability</span>
-        <strong class="overview-kpi-value">{{ reliability_pct }}%</strong>
-        <span class="overview-kpi-meta">{{ alerts_open }} alerts open</span>
-      </article>
-      <article class="card overview-kpi">
-        <span class="overview-kpi-label">Avg Latency</span>
-        <strong class="overview-kpi-value">{% if avg_latency_ms is not None %}{{ avg_latency_ms }} ms{% else %}&mdash;{% endif %}</strong>
-        <span class="overview-kpi-meta">{{ checks_total_24h }} checks / 24h</span>
-      </article>
-      <article class="card overview-kpi">
-        <span class="overview-kpi-label">Error Log Rate</span>
-        <strong class="overview-kpi-value">{{ log_error_rate_pct }}%</strong>
-        <span class="overview-kpi-meta">{{ log_errors_24h }} errors / {{ logs_total_24h }} logs</span>
-      </article>
-    </section>
+        <article class="card overview-health-rail-card" data-overview-alert-card>
+          <div class="overview-panel-head">
+            <div>
+              <h3>Alerts & Notifications</h3>
+              <p class="text-muted small">Recent operational alerts delivered to your channels.</p>
+            </div>
+            <div class="overview-alert-actions">
+              <button class="ghost-btn overview-alert-btn" type="button" data-overview-alert-mark-read>Mark as read</button>
+              <button class="ghost-btn overview-alert-btn" type="button" data-overview-alert-clear>Clear</button>
+              <span class="tag"><span data-overview-alert-unread>{{ notification_unread_count }}</span> unread</span>
+            </div>
+          </div>
+          <div class="overview-alert-stream" data-overview-alert-list>
+            {% for item in overview_notification_rows %}
+            <article class="overview-alert-row">
+              <span class="overview-dot overview-dot-{{ item.tone }}"></span>
+              <div class="overview-alert-copy">
+                <strong>{{ item.title }}</strong>
+                {% if item.body %}
+                <p>{{ item.body|truncatechars:140 }}</p>
+                {% endif %}
+                <div class="overview-alert-meta">
+                  <span>{{ item.channel_label }}</span>
+                  <span>{{ item.time_label }}</span>
+                  {% if item.detail_url %}
+                  <a href="{{ item.detail_url }}" class="overview-resource-link">Open resource</a>
+                  {% endif %}
+                </div>
+              </div>
+            </article>
+            {% empty %}
+            <p class="text-muted">No alert notifications yet. New alerts and warnings will surface here.</p>
+            {% endfor %}
+          </div>
+        </article>
+      </aside>
 
-    <section class="overview-panels">
       <article class="card overview-panel team-planner-panel planner-panel overview-planner-panel" data-overview-planner>
         <header class="planner-head">
           <div class="planner-title">
@@ -281,5 +338,5 @@
 {% block page_js %}
 {{ block.super }}
 <script src="{% static 'js/planner-ui.js' %}?v=20260301a"></script>
-<script src="{% static 'js/home-overview.js' %}?v=20260301b"></script>
+<script src="{% static 'js/home-overview.js' %}?v=20260301c"></script>
 {% endblock page_js %}

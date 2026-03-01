@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 from contextvars import ContextVar
+import functools
 import html
 import hashlib
 import hmac
+import inspect
 import json
 import os
 import re
@@ -392,7 +394,24 @@ def _target_phone_from_username(username: str):
 mcp = FastMCP("alshival-mcp", stateless_http=True)
 
 
-@mcp.tool()
+def mcp_threaded_tool(*tool_args, **tool_kwargs):
+    """
+    Register a sync tool in FastMCP by executing it in a sync thread.
+    This avoids Django's SynchronousOnlyOperation inside async request handling.
+    """
+
+    def _decorator(fn):
+        @functools.wraps(fn)
+        async def _wrapped(*args, **kwargs):
+            return await sync_to_async(fn, thread_sensitive=True)(*args, **kwargs)
+
+        _wrapped.__signature__ = inspect.signature(fn)
+        return mcp.tool(*tool_args, **tool_kwargs)(_wrapped)
+
+    return _decorator
+
+
+@mcp_threaded_tool()
 def ping() -> dict[str, str]:
     """Dummy MCP tool used to validate MCP auth wiring."""
     return {
@@ -1087,10 +1106,7 @@ def _microsoft_graph_read_message(
     return normalized, ""
 
 
-@mcp.tool()
-def search_kb(
-    query: str = "",
-) -> dict[str, Any]:
+def _search_kb_sync(query: str = "") -> dict[str, Any]:
     """
     Search both personal and global knowledge bases for the authenticated user.
     Returns up to 4 personal matches and 3 global matches.
@@ -1148,6 +1164,14 @@ def search_kb(
 
 
 @mcp.tool()
+async def search_kb(
+    query: str = "",
+) -> dict[str, Any]:
+    # FastMCP calls tools from an async request lifecycle; run Django/SQLite work in a sync thread.
+    return await sync_to_async(_search_kb_sync, thread_sensitive=True)(query)
+
+
+@mcp_threaded_tool()
 def outlook_mail(
     action: str = "search",
     query: str = "",
@@ -1368,7 +1392,7 @@ def outlook_mail(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def outlook_calendar(
     query: str = "",
     start_date: str = "",
@@ -1528,7 +1552,7 @@ def outlook_calendar(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_calendar(
     query: str = "",
     start_date: str = "",
@@ -1739,7 +1763,7 @@ def asana_calendar(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_get_subtasks(task_gid: str) -> dict[str, Any]:
     """
     List subtasks for an Asana task.
@@ -1756,7 +1780,7 @@ def asana_get_subtasks(task_gid: str) -> dict[str, Any]:
     if not access_token:
         return {"ok": False, "error": str(token_error or "asana_not_connected"), "subtasks": []}
     subtasks, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/tasks/{resolved_gid}/subtasks",
+        access_token=access_token, path=f"/tasks/{resolved_gid}/subtasks",
         params={"opt_fields": "gid,name,completed,due_on,assignee.name"},
         max_items=100,
     )
@@ -1764,7 +1788,7 @@ def asana_get_subtasks(task_gid: str) -> dict[str, Any]:
         refreshed, _ = _asana_access_token_for_user(actor, force_refresh=True)
         if refreshed:
             subtasks, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/tasks/{resolved_gid}/subtasks",
+                access_token=refreshed, path=f"/tasks/{resolved_gid}/subtasks",
                 params={"opt_fields": "gid,name,completed,due_on,assignee.name"},
                 max_items=100,
             )
@@ -1778,7 +1802,7 @@ def asana_get_subtasks(task_gid: str) -> dict[str, Any]:
     return {"ok": True, "task_gid": resolved_gid, "subtasks": rows}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_list_sections(project_gid: str) -> dict[str, Any]:
     """
     List sections for an Asana project/board.
@@ -1795,7 +1819,7 @@ def asana_list_sections(project_gid: str) -> dict[str, Any]:
     if not access_token:
         return {"ok": False, "error": str(token_error or "asana_not_connected"), "sections": []}
     sections, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/projects/{resolved_gid}/sections",
+        access_token=access_token, path=f"/projects/{resolved_gid}/sections",
         params={"opt_fields": "gid,name"},
         max_items=200,
     )
@@ -1803,7 +1827,7 @@ def asana_list_sections(project_gid: str) -> dict[str, Any]:
         refreshed, _ = _asana_access_token_for_user(actor, force_refresh=True)
         if refreshed:
             sections, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/projects/{resolved_gid}/sections",
+                access_token=refreshed, path=f"/projects/{resolved_gid}/sections",
                 params={"opt_fields": "gid,name"},
                 max_items=200,
             )
@@ -1813,7 +1837,7 @@ def asana_list_sections(project_gid: str) -> dict[str, Any]:
     return {"ok": True, "project_gid": resolved_gid, "sections": rows}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_move_task_to_section(task_gid: str, section_gid: str) -> dict[str, Any]:
     """
     Move an Asana task into a specific section.
@@ -1846,7 +1870,7 @@ def asana_move_task_to_section(task_gid: str, section_gid: str) -> dict[str, Any
     return {"ok": True, "task_gid": resolved_task, "section_gid": resolved_section}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_update_assignee(task_gid: str, assignee_gid: str = "") -> dict[str, Any]:
     """
     Update (or clear) the assignee on an Asana task.
@@ -1880,7 +1904,7 @@ def asana_update_assignee(task_gid: str, assignee_gid: str = "") -> dict[str, An
     return {"ok": True, "task_gid": resolved_task, "assignee_gid": resolved_assignee}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_list_workspace_members(workspace_gid: str) -> dict[str, Any]:
     """
     List members of an Asana workspace.
@@ -1897,7 +1921,7 @@ def asana_list_workspace_members(workspace_gid: str) -> dict[str, Any]:
     if not access_token:
         return {"ok": False, "error": str(token_error or "asana_not_connected"), "members": []}
     members, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/workspaces/{resolved_gid}/users",
+        access_token=access_token, path=f"/workspaces/{resolved_gid}/users",
         params={"opt_fields": "gid,name,email"},
         max_items=500,
     )
@@ -1905,7 +1929,7 @@ def asana_list_workspace_members(workspace_gid: str) -> dict[str, Any]:
         refreshed, _ = _asana_access_token_for_user(actor, force_refresh=True)
         if refreshed:
             members, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/workspaces/{resolved_gid}/users",
+                access_token=refreshed, path=f"/workspaces/{resolved_gid}/users",
                 params={"opt_fields": "gid,name,email"},
                 max_items=500,
             )
@@ -1915,7 +1939,7 @@ def asana_list_workspace_members(workspace_gid: str) -> dict[str, Any]:
     return {"ok": True, "workspace_gid": resolved_gid, "members": rows}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_get_dependencies(task_gid: str) -> dict[str, Any]:
     """
     List dependencies for an Asana task.
@@ -1932,7 +1956,7 @@ def asana_get_dependencies(task_gid: str) -> dict[str, Any]:
     if not access_token:
         return {"ok": False, "error": str(token_error or "asana_not_connected"), "dependencies": []}
     deps, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/tasks/{resolved_gid}/dependencies",
+        access_token=access_token, path=f"/tasks/{resolved_gid}/dependencies",
         params={"opt_fields": "gid,name,completed"},
         max_items=100,
     )
@@ -1940,7 +1964,7 @@ def asana_get_dependencies(task_gid: str) -> dict[str, Any]:
         refreshed, _ = _asana_access_token_for_user(actor, force_refresh=True)
         if refreshed:
             deps, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/tasks/{resolved_gid}/dependencies",
+                access_token=refreshed, path=f"/tasks/{resolved_gid}/dependencies",
                 params={"opt_fields": "gid,name,completed"},
                 max_items=100,
             )
@@ -1950,7 +1974,7 @@ def asana_get_dependencies(task_gid: str) -> dict[str, Any]:
     return {"ok": True, "task_gid": resolved_gid, "dependencies": rows}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_add_dependency(task_gid: str, dependency_gid: str) -> dict[str, Any]:
     """
     Add a dependency to an Asana task (task_gid depends on dependency_gid).
@@ -1983,7 +2007,7 @@ def asana_add_dependency(task_gid: str, dependency_gid: str) -> dict[str, Any]:
     return {"ok": True, "task_gid": resolved_task, "dependency_gid": resolved_dep}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_remove_dependency(task_gid: str, dependency_gid: str) -> dict[str, Any]:
     """
     Remove a dependency from an Asana task.
@@ -2016,7 +2040,7 @@ def asana_remove_dependency(task_gid: str, dependency_gid: str) -> dict[str, Any
     return {"ok": True, "task_gid": resolved_task, "dependency_gid": resolved_dep}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_get_project_status(project_gid: str) -> dict[str, Any]:
     """
     Get the latest status update for an Asana project/board.
@@ -2033,7 +2057,7 @@ def asana_get_project_status(project_gid: str) -> dict[str, Any]:
     if not access_token:
         return {"ok": False, "error": str(token_error or "asana_not_connected"), "latest_status": None}
     statuses, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/projects/{resolved_gid}/project_statuses",
+        access_token=access_token, path=f"/projects/{resolved_gid}/project_statuses",
         params={"opt_fields": "gid,title,color,text,created_at,author.name", "limit": 5},
         max_items=5,
     )
@@ -2041,7 +2065,7 @@ def asana_get_project_status(project_gid: str) -> dict[str, Any]:
         refreshed, _ = _asana_access_token_for_user(actor, force_refresh=True)
         if refreshed:
             statuses, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/projects/{resolved_gid}/project_statuses",
+                access_token=refreshed, path=f"/projects/{resolved_gid}/project_statuses",
                 params={"opt_fields": "gid,title,color,text,created_at,author.name", "limit": 5},
                 max_items=5,
             )
@@ -2051,7 +2075,7 @@ def asana_get_project_status(project_gid: str) -> dict[str, Any]:
     return {"ok": True, "project_gid": resolved_gid, "latest_status": latest}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def asana_get_attachments(task_gid: str) -> dict[str, Any]:
     """
     List attachments for an Asana task.
@@ -2068,7 +2092,7 @@ def asana_get_attachments(task_gid: str) -> dict[str, Any]:
     if not access_token:
         return {"ok": False, "error": str(token_error or "asana_not_connected"), "attachments": []}
     attachments, _trunc, fetch_error = _asana_api_list(
-        access_token, f"/tasks/{resolved_gid}/attachments",
+        access_token=access_token, path=f"/tasks/{resolved_gid}/attachments",
         params={"opt_fields": "gid,name,download_url,view_url,created_at,size"},
         max_items=100,
     )
@@ -2076,7 +2100,7 @@ def asana_get_attachments(task_gid: str) -> dict[str, Any]:
         refreshed, _ = _asana_access_token_for_user(actor, force_refresh=True)
         if refreshed:
             attachments, _trunc, fetch_error = _asana_api_list(
-                refreshed, f"/tasks/{resolved_gid}/attachments",
+                access_token=refreshed, path=f"/tasks/{resolved_gid}/attachments",
                 params={"opt_fields": "gid,name,download_url,view_url,created_at,size"},
                 max_items=100,
             )
@@ -2090,7 +2114,7 @@ def asana_get_attachments(task_gid: str) -> dict[str, Any]:
     return {"ok": True, "task_gid": resolved_gid, "attachments": rows}
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def alert_filter_prompt(
     action: str = "get",
     prompt: str = "",
@@ -2140,7 +2164,7 @@ def alert_filter_prompt(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def resource_health_check(resource_uuid: str) -> dict[str, Any]:
     """
     Run a health check for a resource and return the latest status details.
@@ -2186,7 +2210,7 @@ def resource_health_check(resource_uuid: str) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def resource_logs(
     resource_uuid: str,
     limit: int = 200,
@@ -2248,7 +2272,7 @@ def resource_logs(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def resource_ssh_exec(
     resource_uuid: str,
     command: str,
@@ -2292,7 +2316,7 @@ def resource_ssh_exec(
     return result
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def resource_kb(
     resource_uuid: str,
     query: str = "",
@@ -2341,7 +2365,7 @@ def resource_kb(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def search_users(
     query: str = "",
     phone: str = "",
@@ -2382,7 +2406,7 @@ def search_users(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def directory(
     query: str = "",
     phone: str = "",
@@ -2422,7 +2446,7 @@ def directory(
     }
 
 
-@mcp.tool()
+@mcp_threaded_tool()
 def sms(
     message: str,
     username: str = "",

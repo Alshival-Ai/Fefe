@@ -1,3 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tw-background: 222 47% 11%;
+  --tw-foreground: 213 31% 91%;
+  --tw-card: 222 47% 14%;
+  --tw-card-foreground: 213 31% 91%;
+  --tw-primary: 217 91% 60%;
+  --tw-primary-foreground: 210 40% 98%;
+  --tw-secondary: 216 34% 24%;
+  --tw-secondary-foreground: 210 40% 98%;
+  --tw-muted: 217 33% 18%;
+  --tw-muted-foreground: 215 20% 72%;
+  --tw-border: 217 33% 25%;
+  --tw-input: 217 33% 25%;
+  --tw-ring: 217 91% 60%;
+  --tw-radius: 0.875rem;
+}
+
+.light-style {
+  --tw-background: 210 40% 98%;
+  --tw-foreground: 222 47% 11%;
+  --tw-card: 0 0% 100%;
+  --tw-card-foreground: 222 47% 11%;
+  --tw-primary: 217 91% 48%;
+  --tw-primary-foreground: 210 40% 98%;
+  --tw-secondary: 210 40% 94%;
+  --tw-secondary-foreground: 222 47% 11%;
+  --tw-muted: 210 40% 94%;
+  --tw-muted-foreground: 215 16% 40%;
+  --tw-border: 214 32% 84%;
+  --tw-input: 214 32% 84%;
+  --tw-ring: 217 91% 48%;
+}
+
 .react-card {
   background: rgba(15, 23, 42, 0.7);
   border: 1px solid rgba(148, 163, 184, 0.2);

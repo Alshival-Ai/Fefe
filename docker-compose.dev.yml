@@ -34,6 +34,17 @@ services:
     command: ["python", "manage.py", "run_calendar_sync_worker", "--interval-seconds", "60", "--provider", "all"]
     volumes:
       - ./:/app
+  github-wiki-worker:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      DEBUG: "1"
+      RUN_MIGRATE: "0"
+      RUN_COLLECTSTATIC: "0"
+      WATCHFILES_FORCE_POLLING: "1"
+    entrypoint: ["bash", "/app/docker/entrypoint.sh"]
+    command: ["python", "manage.py", "run_github_wiki_sync_worker", "--interval-seconds", "3600"]
+    volumes:
+      - ./:/app
   global-key-worker:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     environment:

@@ -298,7 +298,10 @@
                 <ul>
                   <li><code>read:user</code></li>
                   <li><code>user:email</code></li>
+                  <li><code>read:org</code></li>
+                  <li><code>repo</code></li>
                 </ul>
+                <p><code>repo</code> is required for GitHub wiki read/write sync.</p>
               </div>
               <div class="connector-support">
                 <p>Update your GitHub OAuth App credentials and test sign-in.</p>
@@ -401,7 +404,9 @@
       {% endif %}
 
       {% if active_tab == 'admin' and request.user.is_superuser %}
-      <section class="table-wrap settings-panel">
+      {{ settings_admin_react_props|json_script:"settings-admin-data" }}
+      <div id="react-root" data-react-app="settings-admin"></div>
+      <section class="table-wrap settings-panel" data-settings-admin-legacy>
         <h3>Alshival Admin</h3>
         <p>Platform-wide controls for runtime behavior and maintenance operations.</p>
         {% if not admin_setup_ready %}

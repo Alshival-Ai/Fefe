@@ -6,7 +6,7 @@
 <section class="hero">
   <div>
     <h1>Team Directory</h1>
-    <p>Manage users, teams, and feature access from one administration workspace.</p>
+    <p>Manage users and teams from one administration workspace.</p>
     <div class="hero-actions">
       <button class="primary-btn" type="button" data-modal-open="user-create">Create account</button>
       <button class="secondary-btn" type="button" data-modal-open="user-invite">Send invite</button>
@@ -23,10 +23,6 @@
       <div>
         <div class="metric-value">{{ team_rows|length }}</div>
         <div class="metric-label">Teams</div>
-      </div>
-      <div>
-        <div class="metric-value">{{ available_features|length }}</div>
-        <div class="metric-label">Feature Gates</div>
       </div>
     </div>
   </div>
@@ -74,7 +70,6 @@
         data-user-role-label="{{ user_item.role_label|escape }}"
         data-user-role-tone="{{ user_item.role_tone|escape }}"
         data-user-teams="{{ user_item.team_names|join:'|'|escape }}"
-        data-user-features="{{ user_item.feature_keys|join:'|'|escape }}"
         data-user-joined="{{ user_item.joined_display|escape }}"
         data-user-last-login="{{ user_item.last_login_display|escape }}"
       >
@@ -89,9 +84,6 @@
         <div class="text-muted small">{{ user_item.email|default:'No email' }}</div>
         <div class="directory-mini-tags">
           <span class="status {{ user_item.role_tone }}">{{ user_item.role_label }}</span>
-          {% if user_item.feature_keys %}
-          <span class="status info">{{ user_item.feature_keys|length }} feature{{ user_item.feature_keys|length|pluralize }}</span>
-          {% endif %}
         </div>
       </button>
       {% empty %}
@@ -161,22 +153,6 @@
       </div>
     </section>
 
-    <section class="directory-section">
-      <div class="directory-section-head">
-        <h4>Feature Access</h4>
-      </div>
-      <div class="directory-chip-list" data-detail-features>
-        {% if selected_user.feature_keys %}
-          {% for feature in available_features %}
-            {% if feature.key in selected_user.feature_keys %}
-            <span class="status success">{{ feature.label }}</span>
-            {% endif %}
-          {% endfor %}
-        {% else %}
-          <span class="text-muted">No feature flags enabled.</span>
-        {% endif %}
-      </div>
-    </section>
     {% else %}
     <div class="directory-empty-state">
       <h3>No users available</h3>
@@ -344,20 +320,6 @@
           {% endfor %}
         </select>
       </label>
-      <fieldset class="modal-fieldset">
-        <legend>Feature access</legend>
-        <div class="directory-feature-grid">
-          {% for feature in available_features %}
-          <label class="checkbox">
-            <input type="checkbox" name="feature_keys" value="{{ feature.key }}" />
-            <span>
-              <strong>{{ feature.label }}</strong>
-              <small class="text-muted">{{ feature.description }}</small>
-            </span>
-          </label>
-          {% endfor %}
-        </div>
-      </fieldset>
       <label class="checkbox">
         <input type="checkbox" name="is_active" value="1" checked />
         <span>Active account</span>
@@ -411,20 +373,6 @@
           {% endfor %}
         </select>
       </label>
-      <fieldset class="modal-fieldset">
-        <legend>Feature access</legend>
-        <div class="directory-feature-grid">
-          {% for feature in available_features %}
-          <label class="checkbox">
-            <input type="checkbox" name="feature_keys" value="{{ feature.key }}" />
-            <span>
-              <strong>{{ feature.label }}</strong>
-              <small class="text-muted">{{ feature.description }}</small>
-            </span>
-          </label>
-          {% endfor %}
-        </div>
-      </fieldset>
       <label class="checkbox">
         <input type="checkbox" name="is_active" value="1" />
         <span>Active account</span>
@@ -507,7 +455,7 @@
 
 <div class="modal" data-modal="user-invite" aria-hidden="true">
   <div class="modal-overlay" data-modal-close></div>
-  <div class="modal-content" role="dialog" aria-modal="true" aria-label="Send invite">
+  <div class="modal-content modal-content-invite" role="dialog" aria-modal="true" aria-label="Send invite">
     <div class="modal-header">
       <h3>Send invite</h3>
       <button class="icon-btn" type="button" data-modal-close>✕</button>
@@ -559,20 +507,6 @@
           {% endfor %}
         </select>
       </label>
-      <fieldset class="modal-fieldset">
-        <legend>Feature access</legend>
-        <div class="directory-feature-grid">
-          {% for feature in available_features %}
-          <label class="checkbox">
-            <input type="checkbox" name="feature_keys" value="{{ feature.key }}" />
-            <span>
-              <strong>{{ feature.label }}</strong>
-              <small class="text-muted">{{ feature.description }}</small>
-            </span>
-          </label>
-          {% endfor %}
-        </div>
-      </fieldset>
       <label class="checkbox">
         <input type="checkbox" name="is_active" value="1" checked />
         <span>Active account</span>
@@ -611,25 +545,11 @@
         .filter(Boolean);
     };
 
-    const featureLabelMap = {
-      {% for feature in available_features %}
-      '{{ feature.key|escapejs }}': '{{ feature.label|escapejs }}',
-      {% endfor %}
-    };
-
     const setSelectValues = (select, values) => {
       if (!select) return;
       const selected = new Set(values || []);
       Array.from(select.options || []).forEach((option) => {
         option.selected = selected.has(option.value);
-      });
-    };
-
-    const setFeatureValues = (form, values) => {
-      if (!form) return;
-      const selected = new Set(values || []);
-      form.querySelectorAll('input[name="feature_keys"]').forEach((input) => {
-        input.checked = selected.has(input.value);
       });
     };
 
@@ -666,7 +586,6 @@
     const detailLastLogin = document.querySelector('[data-detail-last-login]');
     const detailAccess = document.querySelector('[data-detail-access]');
     const detailTeams = document.querySelector('[data-detail-teams]');
-    const detailFeatures = document.querySelector('[data-detail-features]');
     const editButton = document.querySelector('[data-directory-edit-btn]');
     const deleteButton = document.querySelector('[data-directory-delete-btn]');
     const editForm = document.querySelector('[data-user-edit-form]');
@@ -684,8 +603,6 @@
       const roleLabel = row.getAttribute('data-user-role-label') || 'Standard User';
       const roleTone = row.getAttribute('data-user-role-tone') || 'info';
       const teams = parseList(row.getAttribute('data-user-teams'));
-      const features = parseList(row.getAttribute('data-user-features'));
-      const featureLabels = features.map((item) => featureLabelMap[item] || item);
       const joined = row.getAttribute('data-user-joined') || '—';
       const lastLogin = row.getAttribute('data-user-last-login') || '—';
       const userId = row.getAttribute('data-user-id') || '';
@@ -706,7 +623,6 @@
         detailAccess.textContent = isSuper ? 'Platform Admin' : (isStaff ? 'Operations Staff' : 'Standard User');
       }
       renderPills(detailTeams, teams, 'info', 'No teams assigned.');
-      renderPills(detailFeatures, featureLabels, 'success', 'No feature flags enabled.');
 
       if (editButton) editButton.setAttribute('data-user-id', userId);
       if (deleteButton) deleteButton.setAttribute('data-user-id', userId);
@@ -729,7 +645,6 @@
         if (passwordInput) passwordInput.value = '';
         if (passwordConfirmInput) passwordConfirmInput.value = '';
         setSelectValues(teamSelect, teams);
-        setFeatureValues(editForm, features);
         if (editTitle) editTitle.textContent = `Edit user: ${username}`;
       }
       if (deleteForm) deleteForm.action = `/team-directory/users/${userId}/delete/`;
@@ -766,7 +681,6 @@
             row.getAttribute('data-user-username') || '',
             row.getAttribute('data-user-email') || '',
             (row.getAttribute('data-user-teams') || '').split('|').join(' '),
-            (row.getAttribute('data-user-features') || '').split('|').join(' '),
           ].join(' ').toLowerCase();
           const show = !term || haystack.includes(term);
           row.classList.toggle('d-none', !show);
@@ -903,7 +817,6 @@
       if (teamSelect) {
         Array.from(teamSelect.selectedOptions || []).forEach((option) => payload.append('team_names', option.value));
       }
-      form.querySelectorAll('input[name="feature_keys"]:checked').forEach((item) => payload.append('feature_keys', item.value));
       return payload;
     };
 

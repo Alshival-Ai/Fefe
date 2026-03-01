@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import re
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -11,9 +12,8 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
 
-from .models import ResourcePackageOwner, WikiPage
+from .models import ResourcePackageOwner, ResourceTeamShare, WikiPage
 from .resources_store import (
     _user_knowledge_db_path,
     _user_knowledge_db_path_for_owner_root,
@@ -21,6 +21,10 @@ from .resources_store import (
     get_resource_owner_context,
     list_resource_agenda_tasks,
     list_resource_notes,
+)
+
+_RESOURCE_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
 
@@ -216,6 +220,152 @@ def _build_chroma_metadata(
         "resource_document_json": document_json,
         "resource_context_hash": str(context_hash or "").strip(),
     }
+
+
+def _flatten_collection_ids(raw_ids: object) -> list[str]:
+    if isinstance(raw_ids, list) and raw_ids and isinstance(raw_ids[0], list):
+        raw_ids = raw_ids[0]
+    if not isinstance(raw_ids, list):
+        return []
+    return [str(item or "").strip() for item in raw_ids if str(item or "").strip()]
+
+
+def _resource_uuid_from_collection_record_id(record_id: str) -> str:
+    resolved_id = str(record_id or "").strip()
+    if not resolved_id:
+        return ""
+    if _RESOURCE_UUID_RE.fullmatch(resolved_id):
+        return resolved_id.lower()
+    prefix = str(resolved_id.split(":", 1)[0] or "").strip()
+    if _RESOURCE_UUID_RE.fullmatch(prefix):
+        return prefix.lower()
+    return ""
+
+
+def _resource_wiki_page_record_id(resource_uuid: str, page_id: object) -> str:
+    resolved_uuid = str(resource_uuid or "").strip().lower()
+    try:
+        resolved_page_id = int(page_id or 0)
+    except Exception:
+        resolved_page_id = 0
+    if not resolved_uuid or resolved_page_id <= 0:
+        return ""
+    return f"{resolved_uuid}:wiki_page:{resolved_page_id}"
+
+
+def _resource_wiki_page_documents(
+    *,
+    resource_uuid: str,
+    resource_name: str,
+    owner_scope: str,
+    owner_user_id: int,
+    owner_team_id: int,
+    context_hash: str,
+    page_payloads: list[dict[str, Any]],
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict[str, Any]] = []
+    for page in page_payloads:
+        if not isinstance(page, dict):
+            continue
+        page_id = int(page.get("id") or 0)
+        record_id = _resource_wiki_page_record_id(resource_uuid, page_id)
+        if not record_id:
+            continue
+        page_title = str(page.get("title") or "").strip()
+        page_path = str(page.get("path") or "").strip()
+        page_body = str(page.get("body_markdown") or "").strip()
+        page_updated_at = str(page.get("updated_at") or "").strip()
+        page_document = "\n".join(
+            part
+            for part in [
+                f"Resource: {resource_name}" if resource_name else "",
+                f"Wiki Path: {page_path}" if page_path else "",
+                f"Wiki Title: {page_title}" if page_title else "",
+                page_body,
+            ]
+            if part
+        ).strip()
+        if not page_document:
+            continue
+        ids.append(record_id)
+        documents.append(page_document)
+        metadatas.append(
+            {
+                "source": "resource_wiki_page",
+                "collection_name": "resources",
+                "resource_uuid": str(resource_uuid or "").strip(),
+                "owner_scope": str(owner_scope or "").strip(),
+                "owner_user_id": int(owner_user_id or 0),
+                "owner_team_id": int(owner_team_id or 0),
+                "name": resource_name,
+                "wiki_page_id": page_id,
+                "title": page_title,
+                "path": page_path,
+                "is_draft": bool(page.get("is_draft", False)),
+                "updated_at": page_updated_at,
+                "resource_context_hash": str(context_hash or "").strip(),
+            }
+        )
+    return ids, documents, metadatas
+
+
+def _upsert_resource_records_to_collection(
+    *,
+    collection,
+    resource_uuid: str,
+    resource_name: str,
+    document_text: str,
+    resource_metadata: dict[str, Any],
+    owner_scope: str,
+    owner_user_id: int,
+    owner_team_id: int,
+    context_hash: str,
+    page_payloads: list[dict[str, Any]],
+) -> None:
+    if collection is None:
+        return
+
+    normalized_resource_uuid = str(resource_uuid or "").strip().lower()
+    if not normalized_resource_uuid:
+        return
+
+    wiki_ids, wiki_documents, wiki_metadatas = _resource_wiki_page_documents(
+        resource_uuid=normalized_resource_uuid,
+        resource_name=resource_name,
+        owner_scope=owner_scope,
+        owner_user_id=owner_user_id,
+        owner_team_id=owner_team_id,
+        context_hash=context_hash,
+        page_payloads=page_payloads,
+    )
+
+    upsert_ids = [normalized_resource_uuid] + list(wiki_ids)
+    upsert_docs = [document_text or resource_name or normalized_resource_uuid] + list(wiki_documents)
+    upsert_metas = [dict(resource_metadata or {})] + list(wiki_metadatas)
+    collection.upsert(ids=upsert_ids, documents=upsert_docs, metadatas=upsert_metas)
+
+    expected_wiki_ids = set(wiki_ids)
+    try:
+        existing_rows = collection.get(
+            where={"resource_uuid": normalized_resource_uuid},
+            include=[],
+        )
+    except Exception:
+        existing_rows = {}
+    existing_ids = _flatten_collection_ids(existing_rows.get("ids") if isinstance(existing_rows, dict) else [])
+    stale_wiki_ids = [
+        item_id
+        for item_id in existing_ids
+        if str(item_id or "").startswith(f"{normalized_resource_uuid}:wiki_page:")
+        and item_id not in expected_wiki_ids
+    ]
+    if stale_wiki_ids:
+        try:
+            collection.delete(ids=stale_wiki_ids)
+        except Exception:
+            pass
 
 
 def _build_document(resource, owner_context: dict[str, Any], check_payload: dict[str, Any]) -> tuple[dict[str, Any], str, bool]:
@@ -587,38 +737,82 @@ def upsert_resource_health_knowledge(
         context_hash=context_hash,
     )
     if not skip_chroma_upsert:
+        resource_name = str(getattr(resource, "name", "") or resource_uuid).strip() or resource_uuid
+        wiki_payloads = document.get("resource_wiki_pages")
+        if not isinstance(wiki_payloads, list):
+            wiki_payloads = []
+
         # Always keep a resource-scoped KB copy under the resource package directory.
         resource_dir = Path(owner_context.get("resource_dir") or owner_root / "resources" / resource_uuid)
         resource_dir.mkdir(parents=True, exist_ok=True)
         resource_kb_path = resource_dir / "knowledge.db"
         resource_collection = _get_chroma_collection(resource_kb_path)
         if resource_collection is not None:
-            resource_collection.upsert(
-                ids=[resource_uuid],
-                documents=[document_text or str(getattr(resource, "name", "") or resource_uuid)],
-                metadatas=[metadata],
+            _upsert_resource_records_to_collection(
+                collection=resource_collection,
+                resource_uuid=resource_uuid,
+                resource_name=resource_name,
+                document_text=document_text,
+                resource_metadata=metadata,
+                owner_scope=owner_scope,
+                owner_user_id=owner_user_id,
+                owner_team_id=owner_team_id,
+                context_hash=context_hash,
+                page_payloads=wiki_payloads,
             )
 
+        team_ids_to_sync: set[int] = set()
         if owner_scope == "team" and owner_team_id > 0:
-            team = Group.objects.filter(id=owner_team_id).first()
-            team_members = list(team.user_set.filter(is_active=True).order_by("id")) if team is not None else []
+            team_ids_to_sync.add(int(owner_team_id))
+        if owner_user_id > 0:
+            shared_team_ids = (
+                ResourceTeamShare.objects.filter(owner_id=owner_user_id, resource_uuid=resource_uuid)
+                .values_list("team_id", flat=True)
+            )
+            for team_id in shared_team_ids:
+                resolved_team_id = int(team_id or 0)
+                if resolved_team_id > 0:
+                    team_ids_to_sync.add(resolved_team_id)
+
+        if team_ids_to_sync:
+            User = get_user_model()
+            team_members = list(
+                User.objects.filter(is_active=True, groups__id__in=team_ids_to_sync)
+                .distinct()
+                .order_by("id")
+            )
             for member in team_members:
                 member_kb_path = _user_knowledge_db_path(member)
                 member_collection = _get_chroma_collection(member_kb_path)
                 if member_collection is None:
                     continue
-                member_collection.upsert(
-                    ids=[resource_uuid],
-                    documents=[document_text or str(getattr(resource, "name", "") or resource_uuid)],
-                    metadatas=[metadata],
+                _upsert_resource_records_to_collection(
+                    collection=member_collection,
+                    resource_uuid=resource_uuid,
+                    resource_name=resource_name,
+                    document_text=document_text,
+                    resource_metadata=metadata,
+                    owner_scope=owner_scope,
+                    owner_user_id=owner_user_id,
+                    owner_team_id=owner_team_id,
+                    context_hash=context_hash,
+                    page_payloads=wiki_payloads,
                 )
-        else:
+
+        if owner_scope != "team":
             collection = _get_chroma_collection(knowledge_db_path)
             if collection is not None:
-                collection.upsert(
-                    ids=[resource_uuid],
-                    documents=[document_text or str(getattr(resource, "name", "") or resource_uuid)],
-                    metadatas=[metadata],
+                _upsert_resource_records_to_collection(
+                    collection=collection,
+                    resource_uuid=resource_uuid,
+                    resource_name=resource_name,
+                    document_text=document_text,
+                    resource_metadata=metadata,
+                    owner_scope=owner_scope,
+                    owner_user_id=owner_user_id,
+                    owner_team_id=owner_team_id,
+                    context_hash=context_hash,
+                    page_payloads=wiki_payloads,
                 )
 
     _upsert_owner_snapshot(
@@ -716,6 +910,15 @@ def _existing_resource_uuids(owner_root: Path, owner_scope: str) -> set[str]:
                         value = str(resource_uuid or "").strip()
                         if value:
                             values.add(value)
+                    for resource_uuid in (
+                        ResourceTeamShare.objects.filter(team_id__in=team_ids)
+                        .exclude(resource_uuid__isnull=True)
+                        .exclude(resource_uuid="")
+                        .values_list("resource_uuid", flat=True)
+                    ):
+                        value = str(resource_uuid or "").strip()
+                        if value:
+                            values.add(value)
     return values
 
 
@@ -750,10 +953,16 @@ def cleanup_stale_knowledge_records() -> dict[str, int]:
             if collection is not None:
                 try:
                     rows = collection.get(include=[])
-                    ids = list(rows.get("ids") or [])
+                    ids = _flatten_collection_ids(rows.get("ids") if isinstance(rows, dict) else [])
                 except Exception:
                     ids = []
-                stale_ids = [str(item or "").strip() for item in ids if str(item or "").strip() and str(item or "").strip() not in existing]
+                stale_ids: list[str] = []
+                for item in ids:
+                    base_resource_uuid = _resource_uuid_from_collection_record_id(item)
+                    if not base_resource_uuid:
+                        continue
+                    if base_resource_uuid not in existing:
+                        stale_ids.append(item)
                 if stale_ids:
                     try:
                         collection.delete(ids=stale_ids)
