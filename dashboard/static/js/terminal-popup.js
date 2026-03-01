@@ -2,15 +2,18 @@
   const DEFAULT_WS_PATH = '/terminal/ws/';
   const DEFAULT_HINT = 'Ctrl/Cmd+C copy selection, Ctrl/Cmd+click open links, Ctrl+Shift+V paste, Ctrl+/- zoom';
   const DEFAULT_FEATURES = 'width=1100,height=760,resizable=yes,scrollbars=no';
+  const ASK_POPOUT_FEATURES = 'popup=yes,width=520,height=760,resizable=yes,scrollbars=yes';
   const FONT_PREF_KEY = 'devtools_terminal_font_size';
   const ASK_CHAT_ENDPOINT = '/chat/ask/';
   const ASK_VOICE_TOKEN_ENDPOINT = '/chat/voice-token/';
   const ASK_VOICE_LOG_ENDPOINT = '/chat/voice-log/';
+  const ASK_POPOUT_PATH = '/chat/widget/';
 
   let xtermLoaderPromise = null;
   let askWidget = null;
   let askClient = null;
   let askWidgetDragCleanup = null;
+  const embeddedAskMounts = new WeakMap();
   const root = document.body || document.documentElement;
   const isStaff = String(
     (root && (root.getAttribute('data-staff') || root.getAttribute('data-superuser'))) || '0'
@@ -539,16 +542,22 @@
     };
   };
 
-  const openAskChatWidget = async ({ title }) => {
-    removeAskWidget();
+  const openAskPopoutWindow = () => {
+    const popupUrl = new URL(ASK_POPOUT_PATH, window.location.origin).toString();
+    const popout = window.open(popupUrl, 'alshival-ask-widget', ASK_POPOUT_FEATURES);
+    if (!popout) return false;
+    try {
+      popout.focus();
+    } catch (err) {}
+    return true;
+  };
 
-    askWidget = document.createElement('section');
-    askWidget.className = 'ask-terminal-widget';
-    askWidget.innerHTML = `
+  const buildAskChatWidgetMarkup = ({ title, includeClose, includePopout }) => `
       <div class="ask-terminal-widget__head">
         <strong>${escapeHtml(title || 'Ask Alshival')}</strong>
-        ${isStaff ? '<a href="#" class="ask-terminal-widget__sudo" aria-label="Open terminal sudo mode">Sudo mode</a>' : ''}
-        <button type="button" class="ask-terminal-widget__close" aria-label="Close chat">×</button>
+        ${isStaff ? '<a href="#" class="ask-terminal-widget__sudo" aria-label="Open terminal hacker mode">Hacker Mode</a>' : ''}
+        ${includePopout ? '<button type="button" class="ask-terminal-widget__popout" aria-label="Open chat in pop-out window" title="Open in pop-out window">Pop out</button>' : ''}
+        ${includeClose ? '<button type="button" class="ask-terminal-widget__close" aria-label="Close chat">×</button>' : ''}
       </div>
       <div class="ask-terminal-widget__body ask-chat-widget">
         <div class="ask-chat-widget__messages" aria-live="polite">
@@ -610,28 +619,35 @@
         </form>
       </div>
     `;
-    document.body.appendChild(askWidget);
-    document.body.classList.add('ask-widget-open');
-    askWidgetDragCleanup = setupDraggableAskWidget(askWidget);
 
-    const closeButton = askWidget.querySelector('.ask-terminal-widget__close');
-    closeButton.addEventListener('click', () => removeAskWidget());
-    const sudoButton = askWidget.querySelector('.ask-terminal-widget__sudo');
-    if (sudoButton) {
+  const initAskChatWidget = ({ widget, autoFocus, onClose, onSudo, onPopout }) => {
+    const closeButton = widget.querySelector('.ask-terminal-widget__close');
+    if (closeButton && typeof onClose === 'function') {
+      closeButton.addEventListener('click', onClose);
+    }
+    const sudoButton = widget.querySelector('.ask-terminal-widget__sudo');
+    if (sudoButton && typeof onSudo === 'function') {
       sudoButton.addEventListener('click', async (event) => {
         event.preventDefault();
-        await openAskWidget({
-          mode: 'shell',
-          title: 'System Terminal',
-          hintText: 'Staff host login shell',
-        });
+        await onSudo();
+      });
+    }
+    const popoutButton = widget.querySelector('.ask-terminal-widget__popout');
+    if (popoutButton && typeof onPopout === 'function') {
+      popoutButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        onPopout();
       });
     }
 
-    const messagesEl = askWidget.querySelector('.ask-chat-widget__messages');
-    const formEl = askWidget.querySelector('.ask-chat-widget__composer');
-    const inputEl = askWidget.querySelector('[data-ask-input]');
-    const sendEl = askWidget.querySelector('[data-ask-send]');
+    const messagesEl = widget.querySelector('.ask-chat-widget__messages');
+    const formEl = widget.querySelector('.ask-chat-widget__composer');
+    const inputEl = widget.querySelector('[data-ask-input]');
+    const sendEl = widget.querySelector('[data-ask-send]');
+    if (!messagesEl || !formEl || !inputEl || !sendEl) {
+      return { close: () => {} };
+    }
+
     let pending = false;
     let chatInitialized = false;
     let voiceState = 'idle';
@@ -643,7 +659,7 @@
     audioSink.autoplay = true;
     audioSink.playsInline = true;
     audioSink.style.display = 'none';
-    askWidget.appendChild(audioSink);
+    widget.appendChild(audioSink);
 
     const ACTION_ICONS = {
       voice: `
@@ -993,14 +1009,41 @@
     });
 
     updateActionButton();
-    inputEl.focus();
-    askClient = {
+    if (autoFocus) {
+      inputEl.focus();
+    }
+    return {
       close: () => {
         if (activeCall && typeof activeCall.cleanup === 'function') {
           activeCall.cleanup();
         }
       },
     };
+  };
+
+  const openAskChatWidget = async ({ title }) => {
+    removeAskWidget();
+
+    askWidget = document.createElement('section');
+    askWidget.className = 'ask-terminal-widget';
+    askWidget.innerHTML = buildAskChatWidgetMarkup({ title, includeClose: true, includePopout: true });
+    document.body.appendChild(askWidget);
+    document.body.classList.add('ask-widget-open');
+    askWidgetDragCleanup = setupDraggableAskWidget(askWidget);
+
+    askClient = initAskChatWidget({
+      widget: askWidget,
+      autoFocus: true,
+      onClose: () => removeAskWidget(),
+      onSudo: async () => {
+        await openAskWidget({
+          mode: 'shell',
+          title: 'System Terminal',
+          hintText: 'Staff local login shell',
+        });
+      },
+      onPopout: () => openAskPopoutWindow(),
+    });
   };
 
   const openAskWidget = async ({ mode, title, hintText }) => {
@@ -1049,6 +1092,72 @@
     }
   };
 
+  const mountEmbeddedShellWidget = async ({ container, showPopout }) => {
+    if (!container || container.nodeType !== 1) return false;
+    const existingCleanup = embeddedAskMounts.get(container);
+    if (typeof existingCleanup === 'function') {
+      existingCleanup();
+      embeddedAskMounts.delete(container);
+    }
+
+    const restoreChat = () => {
+      window.mountAskAlshivalWidget({
+        container,
+        title: 'Ask Alshival',
+        autoFocus: false,
+        showPopout,
+        inlineShell: true,
+      }).catch(() => {});
+    };
+
+    container.innerHTML = '';
+    const shellWidget = document.createElement('section');
+    shellWidget.className = 'ask-terminal-widget ask-terminal-widget--embedded';
+    shellWidget.innerHTML = `
+      <div class="ask-terminal-widget__head">
+        <strong>System Terminal</strong>
+        <button type="button" class="ask-terminal-widget__chatback" aria-label="Return to Ask Alshival">Ask Alshival</button>
+        ${showPopout ? '<button type="button" class="ask-terminal-widget__popout" aria-label="Open chat in pop-out window" title="Open in pop-out window">Pop out</button>' : ''}
+        <button type="button" class="ask-terminal-widget__close" aria-label="Close terminal">×</button>
+      </div>
+      <div class="ask-terminal-widget__body"></div>
+    `;
+    container.appendChild(shellWidget);
+
+    const closeButton = shellWidget.querySelector('.ask-terminal-widget__close');
+    if (closeButton) closeButton.addEventListener('click', restoreChat);
+    const backButton = shellWidget.querySelector('.ask-terminal-widget__chatback');
+    if (backButton) backButton.addEventListener('click', restoreChat);
+    const popoutButton = shellWidget.querySelector('.ask-terminal-widget__popout');
+    if (popoutButton) {
+      popoutButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        openAskPopoutWindow();
+      });
+    }
+
+    const body = shellWidget.querySelector('.ask-terminal-widget__body');
+    const wsPath = buildWsPath(DEFAULT_WS_PATH, { mode: 'shell' });
+    let shellClient = null;
+    try {
+      shellClient = await makeTerminalClient({
+        container: body,
+        title: 'System Terminal',
+        hintText: 'Staff local login shell',
+        wsPath,
+      });
+    } catch (error) {
+      body.innerHTML = '<div class="ask-terminal-widget__error">Failed to start terminal.</div>';
+    }
+
+    embeddedAskMounts.set(container, () => {
+      if (shellClient && typeof shellClient.close === 'function') {
+        shellClient.close();
+      }
+    });
+    return true;
+  };
+
   window.openAskAlshivalWidget = async (options = {}) => {
     const mode = String((options && options.mode) || 'chat').trim().toLowerCase();
     const title = String((options && options.title) || 'Ask Alshival');
@@ -1063,6 +1172,65 @@
       return true;
     }
     await openAskChatWidget({ title });
+    return true;
+  };
+  window.openAskAlshivalWidgetPopout = () => openAskPopoutWindow();
+
+  window.mountAskAlshivalWidget = async (options = {}) => {
+    const target = options && options.container;
+    const container = typeof target === 'string'
+      ? document.querySelector(target)
+      : (target && target.nodeType === 1 ? target : null);
+    if (!container) return false;
+
+    const existingCleanup = embeddedAskMounts.get(container);
+    if (typeof existingCleanup === 'function') {
+      existingCleanup();
+      embeddedAskMounts.delete(container);
+    }
+
+    const title = String((options && options.title) || 'Ask Alshival');
+    const showPopout = !(options && options.showPopout === false);
+    const inlineShell = Boolean(options && options.inlineShell);
+    container.innerHTML = '';
+    const embeddedWidget = document.createElement('section');
+    embeddedWidget.className = 'ask-terminal-widget ask-terminal-widget--embedded';
+    embeddedWidget.innerHTML = buildAskChatWidgetMarkup({ title, includeClose: true, includePopout: showPopout });
+    container.appendChild(embeddedWidget);
+
+    const client = initAskChatWidget({
+      widget: embeddedWidget,
+      autoFocus: Boolean(options && options.autoFocus),
+      onClose: () => {
+        window.mountAskAlshivalWidget({
+          container,
+          title,
+          autoFocus: false,
+          showPopout,
+        }).catch(() => {});
+      },
+      onSudo: async () => {
+        if (!isStaff) return;
+        if (inlineShell) {
+          await mountEmbeddedShellWidget({
+            container,
+            showPopout,
+          });
+          return;
+        }
+        await openAskWidget({
+          mode: 'shell',
+          title: 'System Terminal',
+          hintText: 'Staff local login shell',
+        });
+      },
+      onPopout: () => openAskPopoutWindow(),
+    });
+    embeddedAskMounts.set(container, () => {
+      if (client && typeof client.close === 'function') {
+        client.close();
+      }
+    });
     return true;
   };
 

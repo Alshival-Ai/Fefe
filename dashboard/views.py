@@ -2850,7 +2850,7 @@ _ASANA_FULL_IMPORT_TASK_FETCH_LIMIT = 10000
 _ASANA_OVERVIEW_PER_REQUEST_LIMIT = 100
 _ASANA_API_TIMEOUT_SECONDS = 20
 _ASANA_TOKEN_REFRESH_URL = "https://app.asana.com/-/oauth_token"
-_ASANA_AGENDA_COMPLETED_WINDOW_DAYS = 14
+_ASANA_AGENDA_COMPLETED_WINDOW_DAYS = 30
 _ASANA_TASK_COMMENT_FETCH_LIMIT = 60
 _ASANA_AUTO_ASSIGN_MAX_TASKS = 12
 _ASANA_AUTO_ASSIGN_KB_RESULTS_PER_TASK = 4
@@ -4131,6 +4131,7 @@ def _asana_overview_context_for_user(
     user,
     *,
     force_refresh: bool = False,
+    allow_refresh: bool = True,
     cache_key: str = _ASANA_OVERVIEW_CACHE_KEY,
     task_fetch_limit: int | None = None,
     run_auto_assign: bool = False,
@@ -4220,7 +4221,7 @@ def _asana_overview_context_for_user(
         and bool(cache_has_board_fields)
         and bool(cache_has_project_tasks)
     )
-    if cache_is_fresh and not force_refresh:
+    if bool(cached_payload) and not force_refresh and (cache_is_fresh or not allow_refresh):
         context["tasks"] = cached_payload.get("tasks") if isinstance(cached_payload.get("tasks"), list) else []
         context["task_count"] = int(cached_payload.get("task_count") or len(context["tasks"]))
         context["boards"] = cached_payload.get("boards") if isinstance(cached_payload.get("boards"), list) else []
@@ -4228,14 +4229,18 @@ def _asana_overview_context_for_user(
         context["workspace_count"] = int(cached_payload.get("workspace_count") or 0)
         context["truncated"] = bool(cached_payload.get("truncated"))
         context["cached"] = True
+        context["stale"] = not bool(cache_is_fresh)
         context["synced_display"] = _format_display_time(str(cached_payload.get("fetched_at") or ""))
         if write_calendar_cache:
             _write_asana_calendar_cache(
                 user,
                 task_rows=[row for row in context["tasks"] if isinstance(row, dict)],
                 fetched_at_epoch=cached_epoch,
-                status="cached",
+                status="cached" if cache_is_fresh else "stale",
             )
+        return context
+
+    if not allow_refresh:
         return context
 
     fresh_payload, fresh_error = _asana_overview_payload_from_api(
@@ -4990,6 +4995,24 @@ def _resolve_resource_scope_payload(request) -> dict[str, list[str] | str]:
     return {
         "scope": scope,
         "team_names": team_names,
+    }
+
+
+def _resolve_forced_team_scope_payload(request) -> dict[str, list[str] | str] | None:
+    if not _post_flag(request, "force_team_scope"):
+        return None
+    team_id = int(request.POST.get("team_id") or 0)
+    if team_id <= 0:
+        return None
+    team = request.user.groups.filter(id=team_id).only("name").first()
+    if team is None:
+        return None
+    team_name = str(team.name or "").strip()
+    if not team_name:
+        return None
+    return {
+        "scope": "team",
+        "team_names": [team_name],
     }
 
 
@@ -6135,6 +6158,7 @@ def home(request):
     asana_overview = _asana_overview_context_for_user(
         request.user,
         force_refresh=False,
+        allow_refresh=False,
         cache_key=_ASANA_OVERVIEW_CACHE_KEY,
         task_fetch_limit=_ASANA_OVERVIEW_TASK_FETCH_LIMIT,
         run_auto_assign=False,
@@ -6156,14 +6180,6 @@ def home(request):
         task_resource_mappings=asana_task_resource_mappings,
         resource_name_lookup=asana_resource_lookup,
     )
-    try:
-        refresh_calendar_cache_for_user(
-            request.user,
-            provider="outlook",
-            force=False,
-        )
-    except Exception:
-        pass
     overview_calendar_external_items = _merge_planner_external_items(
         _asana_planner_items_from_context(asana_overview),
         _outlook_planner_items_for_user(request.user),
@@ -6359,6 +6375,11 @@ def create_asana_board_task(request, board_gid: str):
     notes = str(request.POST.get("notes") or payload.get("notes") or "").strip()
     if len(notes) > 5000:
         notes = notes[:5000]
+    requested_assignee_gid = str(
+        request.POST.get("assignee_gid")
+        or payload.get("assignee_gid")
+        or ""
+    ).strip()
 
     due_date_raw = str(
         request.POST.get("due_date")
@@ -6465,8 +6486,11 @@ def create_asana_board_task(request, board_gid: str):
         "name": task_name,
         "projects": [resolved_board_gid],
         "workspace": workspace_gid,
-        "assignee": "me",
     }
+    if bool(getattr(request.user, "is_superuser", False)) and requested_assignee_gid:
+        create_data["assignee"] = requested_assignee_gid
+    else:
+        create_data["assignee"] = "me"
     if notes:
         create_data["notes"] = notes
     if due_at:
@@ -9067,6 +9091,18 @@ def _build_wiki_page_listing_context(
 ) -> dict[str, object]:
     requested_path = _normalize_wiki_path(requested_page_raw, "")
     member_teams = _ssh_team_choices_for_user(actor)
+    resource_scope_by_uuid: dict[str, str] = {}
+    try:
+        for resource_item in list_resources(actor):
+            resource_uuid = _normalize_resource_uuid(getattr(resource_item, "resource_uuid", "") or "")
+            if not resource_uuid:
+                continue
+            access_scope = str(getattr(resource_item, "access_scope", "account") or "account").strip().lower()
+            if access_scope not in {"account", "team", "global"}:
+                access_scope = "account"
+            resource_scope_by_uuid[resource_uuid] = access_scope
+    except Exception:
+        resource_scope_by_uuid = {}
     pages = list(
         _wiki_accessible_queryset(
             actor,
@@ -9084,6 +9120,20 @@ def _build_wiki_page_listing_context(
         item_team_id = _normalize_team_id(item_scope_key) if item_scope == _WIKI_SCOPE_TEAM else ""
         item_scope_name = str(item.resource_name or "").strip()
         team_names = sorted([str(team.name) for team in item.team_access.all()], key=lambda value: value.lower())
+        nav_scope = "account"
+        if item_scope == _WIKI_SCOPE_TEAM:
+            nav_scope = "team"
+        elif item_scope == _WIKI_SCOPE_RESOURCE:
+            nav_scope = resource_scope_by_uuid.get(item_resource_uuid, "account")
+            if nav_scope not in {"account", "team", "global"}:
+                nav_scope = "account"
+        else:
+            if bool(item.is_draft):
+                nav_scope = "account"
+            elif team_names:
+                nav_scope = "team"
+            else:
+                nav_scope = "global"
         wiki_pages.append(
             {
                 "id": int(item.id),
@@ -9099,6 +9149,7 @@ def _build_wiki_page_listing_context(
                 "resource_name": item_scope_name if item_scope == _WIKI_SCOPE_RESOURCE else "",
                 "team_id": item_team_id,
                 "team_name": item_scope_name if item_scope == _WIKI_SCOPE_TEAM else "",
+                "nav_scope": nav_scope,
                 "updated_display": _format_display_time(item.updated_at.isoformat() if getattr(item, "updated_at", None) else ""),
             }
         )
@@ -10014,6 +10065,36 @@ def team_page(request):
         resource_index=resource_index,
         resource_name_lookup=team_resource_name_lookup,
     )
+    member_teams = _ssh_team_choices_for_user(request.user)
+    local_ssh_credentials = list_ssh_credentials(request.user)
+    global_ssh_credentials = list_global_ssh_credentials()
+    ssh_credentials = []
+    for item in local_ssh_credentials:
+        ssh_credentials.append(
+            {
+                "id": item.id,
+                "id_value": str(item.id),
+                "name": item.name,
+                "scope": item.scope,
+                "scope_level": item.scope if item.scope in {"account", "team"} else "account",
+                "team_names": item.team_names,
+                "created_at": item.created_at,
+                "is_global": False,
+            }
+        )
+    for item in global_ssh_credentials:
+        ssh_credentials.append(
+            {
+                "id": item.id,
+                "id_value": f"global:{item.id}",
+                "name": item.name,
+                "scope": "global_team",
+                "scope_level": "global",
+                "team_names": [item.team_name] if item.team_name else [],
+                "created_at": item.created_at,
+                "is_global": True,
+            }
+        )
 
     twilio_sms_available = is_twilio_configured()
     email_notifications_available = is_support_inbox_email_alerts_enabled()
@@ -10038,6 +10119,8 @@ def team_page(request):
             "team_membership_count": len(memberships),
             "team_resource_count": len(team_resources),
             "team_planner_external_items_by_team": team_planner_external_items_by_team,
+            "member_teams": member_teams,
+            "ssh_credential_choices": ssh_credentials,
             "twilio_sms_available": twilio_sms_available,
             "email_notifications_available": email_notifications_available,
             "team_chat_notification_settings_by_team": team_chat_notification_settings_by_team,
@@ -10058,6 +10141,22 @@ def resources(request):
             resource_uuid=str(alert.get("resource_uuid") or "").strip(),
         )
     member_teams = _ssh_team_choices_for_user(request.user)
+    team_resources_nav = []
+    for team_name in member_teams:
+        team_resources = []
+        for item in resources:
+            item_scope = str(getattr(item, "access_scope", "") or "").strip().lower()
+            item_team_names = list(getattr(item, "team_names", []) or [])
+            if item_scope != "team" or team_name not in item_team_names:
+                continue
+            team_resources.append(item)
+        if team_resources:
+            team_resources_nav.append(
+                {
+                    "name": team_name,
+                    "resources": team_resources,
+                }
+            )
     local_ssh_credentials = list_ssh_credentials(request.user)
     global_ssh_credentials = list_global_ssh_credentials()
     ssh_credentials = []
@@ -10094,6 +10193,7 @@ def resources(request):
         'resource_alerts': resource_alerts,
         'resource_insights': resource_insights,
         'member_teams': member_teams,
+        'team_resources_nav': team_resources_nav,
         'account_ssh_keys': account_ssh_keys,
         'team_ssh_keys': team_ssh_keys,
         'ssh_credential_choices': ssh_credentials,
@@ -10858,6 +10958,7 @@ def resource_detail(request, username: str, resource_uuid, route_kind: str = "us
     asana_overview = _asana_overview_context_for_user(
         request.user,
         force_refresh=False,
+        allow_refresh=False,
         cache_key=_ASANA_OVERVIEW_CACHE_KEY,
         task_fetch_limit=_ASANA_OVERVIEW_TASK_FETCH_LIMIT,
         run_auto_assign=False,
@@ -14800,6 +14901,12 @@ def _twiml_sms_response(message: str) -> HttpResponse:
 
 
 @login_required
+@require_GET
+def ask_alshival_widget_page(request):
+    return render(request, "pages/ask_widget_popout.html")
+
+
+@login_required
 @require_POST
 def ask_alshival_chat(request):
     try:
@@ -15319,6 +15426,15 @@ def add_resource_item(request):
     notes = (request.POST.get('notes') or '').strip()
     resource_metadata = _resource_metadata_from_request(request)
     resource_scope_payload = _resolve_resource_scope_payload(request)
+    forced_team_scope_payload = _resolve_forced_team_scope_payload(request)
+    if _post_flag(request, "force_team_scope") and forced_team_scope_payload is None:
+        next_url = str(request.POST.get("next") or "").strip()
+        messages.warning(request, "Choose a valid team before adding a resource.")
+        if next_url.startswith("/") and not next_url.startswith("//"):
+            return redirect(next_url)
+        return redirect("team_page")
+    if forced_team_scope_payload is not None:
+        resource_scope_payload = forced_team_scope_payload
     ssh_payload = _resolve_ssh_payload(request, default_key_name=name)
     target, address, port, healthcheck_url = _normalize_resource_target(resource_type, target, address, port, healthcheck_url)
 
@@ -15375,6 +15491,9 @@ def add_resource_item(request):
             # The resource should still be created even if first health check fails.
             pass
 
+    next_url = str(request.POST.get("next") or "").strip()
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        return redirect(next_url)
     return redirect('resources')
 
 

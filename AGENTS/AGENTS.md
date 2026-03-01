@@ -334,6 +334,8 @@ This codebase is actively developed by multiple humans and AI agents pushing to 
 - Superuser `Ask Alshival` shell sessions now resolve to a per-authenticated-user home directory by default:
   - Path pattern: `<USER_DATA_ROOT>/<slug-username>-<user_id>/home`.
   - Home directory is created on first launch.
+- Shell mode selection is local-first by default; host shell mode is opt-in via:
+  - `WEB_TERMINAL_PREFER_HOST_SHELL=1` (or `true/yes/on`).
 - Shell launch changed to avoid login-profile overrides:
   - Uses `bash --noprofile --norc -i` when bash is available.
 - Static local identity env overrides (`WEB_TERMINAL_LOCAL_USERNAME` + `WEB_TERMINAL_LOCAL_HOME`) are only used when:

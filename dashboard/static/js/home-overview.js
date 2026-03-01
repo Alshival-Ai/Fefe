@@ -5,6 +5,7 @@
   }
 
   const plannerRoot = dashboard.querySelector('[data-overview-planner]');
+  const isSuperuser = dashboard.getAttribute('data-superuser') === '1';
 
   const getCookie = (name) => {
     const cookieString = document.cookie || '';
@@ -48,7 +49,7 @@
   const agendaItemMapUrl = dashboard.getAttribute('data-agenda-item-map-url') || '';
   const completedWindowDays = Math.max(
     1,
-    Math.min(60, Number.parseInt(String(dashboard.getAttribute('data-asana-completed-window-days') || '14'), 10) || 14)
+    Math.min(90, Number.parseInt(String(dashboard.getAttribute('data-asana-completed-window-days') || '30'), 10) || 30)
   );
   const plannerStorageKey = 'overview_planner_items';
 
@@ -61,6 +62,7 @@
   let taskResourceMappings = {};
   let plannerController = null;
   const outlookTeamsJoinByAgendaItemId = new Map();
+  const workspaceMembersCache = new Map();
 
   const parseJsonNode = (node, fallback) => {
     if (!node) return fallback;
@@ -120,6 +122,8 @@
 
   const asanaBoardRowsFromTaskRaw = (taskRow) => {
     const links = Array.isArray(taskRow && taskRow.project_links) ? taskRow.project_links : [];
+    const workspaceGid = String(taskRow && taskRow.workspace_gid ? taskRow.workspace_gid : '').trim();
+    const workspaceName = String(taskRow && taskRow.workspace_name ? taskRow.workspace_name : '').trim();
     const rows = [];
     const seen = new Set();
     links.forEach((link) => {
@@ -132,6 +136,8 @@
         gid,
         name,
         url: String(link.url || '').trim(),
+        workspace_gid: workspaceGid,
+        workspace_name: workspaceName,
       });
     });
     return rows;
@@ -151,6 +157,7 @@
         gid,
         name,
         url: String(board.url || '').trim(),
+        workspace_gid: String(board.workspace_gid || board.workspaceGid || '').trim(),
         workspace_name: String(board.workspace_name || board.workspaceName || '').trim(),
       });
     });
@@ -170,6 +177,7 @@
           gid,
           name,
           url: String(rawBoard.url || '').trim(),
+          workspace_gid: String(rawBoard.workspace_gid || rawBoard.workspaceGid || '').trim(),
           workspace_name: String(rawBoard.workspace_name || rawBoard.workspaceName || '').trim(),
         };
         const existing = mergedByGid.get(gid);
@@ -178,6 +186,7 @@
           return;
         }
         if (!existing.url && normalized.url) existing.url = normalized.url;
+        if (!existing.workspace_gid && normalized.workspace_gid) existing.workspace_gid = normalized.workspace_gid;
         if (!existing.workspace_name && normalized.workspace_name) existing.workspace_name = normalized.workspace_name;
       });
     });
@@ -682,6 +691,39 @@
     return parsed;
   };
 
+  const loadWorkspaceMembers = async (workspaceGid) => {
+    const gid = String(workspaceGid || '').trim();
+    if (!gid) return [];
+    if (workspaceMembersCache.has(gid)) {
+      return workspaceMembersCache.get(gid);
+    }
+    const membersUrl = asanaWorkspaceMembersUrlForWorkspace(gid);
+    if (!membersUrl) {
+      workspaceMembersCache.set(gid, []);
+      return [];
+    }
+    const payload = await fetchJson(membersUrl);
+    const seen = new Set();
+    const members = (Array.isArray(payload && payload.members) ? payload.members : [])
+      .map((member) => ({
+        gid: String(member && member.gid ? member.gid : '').trim(),
+        name: String(member && member.name ? member.name : '').trim(),
+        email: String(member && member.email ? member.email : '').trim(),
+      }))
+      .filter((member) => {
+        if (!member.gid || seen.has(member.gid)) return false;
+        seen.add(member.gid);
+        return true;
+      })
+      .sort((left, right) => {
+        const leftName = String(left.name || left.email || left.gid).trim().toLowerCase();
+        const rightName = String(right.name || right.email || right.gid).trim().toLowerCase();
+        return leftName.localeCompare(rightName);
+      });
+    workspaceMembersCache.set(gid, members);
+    return members;
+  };
+
   const updateAsanaTaskCompletion = async (item, completed) => {
     const gid = asanaTaskGidForItem(item);
     const url = asanaCompleteUrlForTask(gid);
@@ -850,6 +892,53 @@
     modalApi.actions.appendChild(cancelBtn);
 
     const boardLink = asanaBoardLinkByGid(boardGid);
+    const boardRow = asanaBoardRowByGid(boardGid);
+    const boardWorkspaceGid = String(
+      (boardRow && (boardRow.workspace_gid || boardRow.workspaceGid))
+      || (section && (section.workspace_gid || section.workspaceGid))
+      || ''
+    ).trim();
+    let assigneeSelect = null;
+    if (isSuperuser) {
+      const assigneeField = document.createElement('label');
+      const assigneeLabel = document.createElement('span');
+      assigneeLabel.textContent = 'Assignee (superuser only)';
+      assigneeField.appendChild(assigneeLabel);
+
+      assigneeSelect = document.createElement('select');
+      const meOption = document.createElement('option');
+      meOption.value = '';
+      meOption.textContent = 'Me (default)';
+      assigneeSelect.appendChild(meOption);
+      assigneeField.appendChild(assigneeSelect);
+      form.appendChild(assigneeField);
+
+      if (boardWorkspaceGid) {
+        try {
+          const members = await loadWorkspaceMembers(boardWorkspaceGid);
+          members.forEach((member) => {
+            const memberGid = String(member.gid || '').trim();
+            if (!memberGid) return;
+            const option = document.createElement('option');
+            option.value = memberGid;
+            option.textContent = String(member.name || member.email || memberGid).trim();
+            assigneeSelect.appendChild(option);
+          });
+        } catch (error) {
+          assigneeSelect.disabled = true;
+          const warning = document.createElement('div');
+          warning.className = 'text-muted small';
+          warning.textContent = 'Unable to load workspace members. Task will be assigned to you.';
+          assigneeField.appendChild(warning);
+        }
+      } else {
+        assigneeSelect.disabled = true;
+        const warning = document.createElement('div');
+        warning.className = 'text-muted small';
+        warning.textContent = 'Board workspace unavailable. Task will be assigned to you.';
+        assigneeField.appendChild(warning);
+      }
+    }
     if (boardLink.url) {
       const boardBtn = document.createElement('a');
       boardBtn.className = 'ghost-btn';
@@ -867,15 +956,33 @@
       const dueDate = String(dueDateInput && dueDateInput.value ? dueDateInput.value : '').trim();
       const dueTime = String(dueTimeInput && dueTimeInput.value ? dueTimeInput.value : '').trim();
       const notes = String(notesInput && notesInput.value ? notesInput.value : '').trim();
+      const assigneeGid = String(
+        isSuperuser && assigneeSelect && !assigneeSelect.disabled && assigneeSelect.value
+          ? assigneeSelect.value
+          : ''
+      ).trim();
+      const wasAssigneeDisabled = Boolean(assigneeSelect && assigneeSelect.disabled);
 
       createBtn.disabled = true;
+      if (assigneeSelect) assigneeSelect.disabled = true;
       try {
-        const payload = await postJson(createUrl, {
+        const createRequest = {
           name: taskName,
           due_date: dueDate,
           due_time: dueTime,
           notes,
-        });
+        };
+        if (assigneeGid) {
+          createRequest.assignee_gid = assigneeGid;
+        }
+        const payload = await postJson(createUrl, createRequest);
+        const selectedAssigneeName = assigneeGid && assigneeSelect
+          ? String(
+            assigneeSelect.options[assigneeSelect.selectedIndex]
+              ? assigneeSelect.options[assigneeSelect.selectedIndex].textContent
+              : ''
+          ).trim()
+          : '';
         const taskRow = payload && payload.task && typeof payload.task === 'object'
           ? payload.task
           : {
@@ -886,6 +993,8 @@
             completed: false,
             completed_at: '',
             project_links: [{ gid: boardGid, name: boardName, url: boardLink.url || '' }],
+            assignee_gid: assigneeGid,
+            assignee_name: selectedAssigneeName,
           };
         upsertAsanaTaskRow(taskRow);
         const updatedRow = asanaTaskRowByGid(String(taskRow && taskRow.gid ? taskRow.gid : '').trim());
@@ -899,6 +1008,7 @@
       } catch (error) {
         window.alert(`Unable to create Asana task: ${String(error && error.message ? error.message : 'request_failed')}`);
       } finally {
+        if (assigneeSelect) assigneeSelect.disabled = wasAssigneeDisabled;
         createBtn.disabled = false;
       }
     });
@@ -1893,37 +2003,38 @@
   };
 
   const openAsanaAgendaSections = (context) => {
-    const view = String(context && context.view ? context.view : '').trim().toLowerCase();
-    if (view !== 'agenda' && view !== 'month-list') return [];
+    const rawView = String(context && context.view ? context.view : '').trim().toLowerCase();
+    const view = (rawView === 'all' || rawView === 'month-list') ? 'all' : 'tasks';
     const activeFilter = String(context && context.activeFilter ? context.activeFilter : 'all').trim().toLowerCase();
     if (activeFilter !== 'all') return [];
     const includeCompletedWindow = true;
     outlookTeamsJoinByAgendaItemId.clear();
-
-    // For month-list, derive month boundaries from the calendarCursor passed in context
-    let monthStartKey = '';
-    let monthEndKey = '';
-    if (view === 'month-list') {
-      const cursorStr = String(context && context.calendarCursor ? context.calendarCursor : '').trim();
-      if (cursorStr) {
-        const cursorDate = new Date(`${cursorStr}T00:00:00`);
-        if (!Number.isNaN(cursorDate.getTime())) {
-          const mStart = new Date(cursorDate.getFullYear(), cursorDate.getMonth(), 1);
-          const mEnd = new Date(cursorDate.getFullYear(), cursorDate.getMonth() + 1, 0);
-          monthStartKey = toYmdLocal(mStart);
-          monthEndKey = toYmdLocal(mEnd);
-        }
-      }
+    const todayKey = toYmdLocal(new Date());
+    const selectedDateKey = String(context && context.selectedDate ? context.selectedDate : '').trim() || todayKey;
+    const tasksStartKey = selectedDateKey;
+    const tasksEndDate = new Date(`${tasksStartKey}T00:00:00`);
+    if (!Number.isNaN(tasksEndDate.getTime())) {
+      tasksEndDate.setDate(tasksEndDate.getDate() + 13);
     }
+    const tasksEndKey = Number.isNaN(tasksEndDate.getTime()) ? tasksStartKey : toYmdLocal(tasksEndDate);
+    const allHistoryStartDate = new Date(`${todayKey}T00:00:00`);
+    if (!Number.isNaN(allHistoryStartDate.getTime())) {
+      allHistoryStartDate.setDate(allHistoryStartDate.getDate() - (completedWindowDays - 1));
+    }
+    const allHistoryStartKey = Number.isNaN(allHistoryStartDate.getTime()) ? todayKey : toYmdLocal(allHistoryStartDate);
 
     const candidateRows = asanaTasks.filter((row) => {
       if (!row || typeof row !== 'object') return false;
-      if (monthStartKey) {
-        const rowDate = String(row.due_date || '').trim();
-        // keep tasks that fall in the month or have no due date
-        if (rowDate && (rowDate < monthStartKey || rowDate > monthEndKey)) return false;
+      const completed = Boolean(row.completed);
+      const rowDate = String(row.due_date || '').trim();
+      if (view === 'all') {
+        if (!completed) return true;
+        return includeCompletedWindow && isTaskCompletedWithinWindow(row);
       }
-      if (!Boolean(row.completed)) return true;
+      if (rowDate && (rowDate < tasksStartKey || rowDate > tasksEndKey)) {
+        return false;
+      }
+      if (!completed) return true;
       return includeCompletedWindow && isTaskCompletedWithinWindow(row);
     });
 
@@ -2039,23 +2150,15 @@
           .map(({ sortKey, ...rest }) => rest),
       }));
 
-    const selectedDate = String(context && context.selectedDate ? context.selectedDate : '').trim();
-    let endDate = '';
-    if (selectedDate) {
-      const startDateObj = new Date(`${selectedDate}T00:00:00`);
-      if (!Number.isNaN(startDateObj.getTime())) {
-        startDateObj.setDate(startDateObj.getDate() + 20);
-        endDate = toYmdLocal(startDateObj);
-      }
-    }
-
     const outlookItems = plannerExternalItems
       .filter((item) => plannerItemSource(item) === 'outlook')
       .filter((item) => {
         const itemDate = String(item && item.date ? item.date : '').trim();
         if (!itemDate) return false;
-        if (!selectedDate || !endDate) return true;
-        return itemDate >= selectedDate && itemDate <= endDate;
+        if (view === 'all') {
+          return itemDate >= allHistoryStartKey;
+        }
+        return itemDate >= tasksStartKey && itemDate <= tasksEndKey;
       })
       .map((item) => {
         const rawId = String(item && item.id ? item.id : '').trim();
@@ -2240,129 +2343,21 @@
       showListTimelineItems: (context) => String(context && context.activeFilter ? context.activeFilter : 'all')
         .trim()
         .toLowerCase() !== 'all',
-      monthEmptyText: 'No agenda items for this day.',
-      listEmptyText: 'No upcoming items in this range.',
-      listWindowDays: 21,
+      monthEmptyText: 'No tasks for this day.',
+      listEmptyText: 'No tasks in the last 30 days or upcoming.',
+      listHistoryDays: 30,
     });
   }
 
-  const askMessages = dashboard.querySelector('[data-ask-messages]');
-  const askForm = dashboard.querySelector('[data-ask-form]');
-  const askInput = dashboard.querySelector('[data-ask-input]');
-  const askSend = dashboard.querySelector('[data-ask-send]');
-  const askSudo = dashboard.querySelector('[data-ask-sudo]');
-  const chatUrl = dashboard.getAttribute('data-chat-url') || '';
-
-  let askPending = false;
-  let askInitialized = false;
-  let conversationId = '';
-  try {
-    const saved = window.localStorage.getItem('overview_ask_conversation_id') || '';
-    conversationId = saved || `overview-${Date.now()}`;
-  } catch (error) {
-    conversationId = `overview-${Date.now()}`;
-  }
-
-  const addAskMessage = (role, text) => {
-    if (!askMessages) return;
-    const node = document.createElement('div');
-    node.className = `ask-chat-msg ${role === 'user' ? 'ask-chat-msg--user' : 'ask-chat-msg--assistant'}`;
-    node.textContent = String(text || '').trim();
-    askMessages.appendChild(node);
-    if (!askInitialized) {
-      askMessages.scrollTop = 0;
-      askInitialized = true;
-    }
-  };
-
-  const setAskPending = (next) => {
-    askPending = Boolean(next);
-    if (askSend) askSend.disabled = askPending;
-    if (askInput) askInput.disabled = askPending;
-  };
-
-  if (askInput && askForm) {
-    askInput.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-      event.preventDefault();
-      if (typeof askForm.requestSubmit === 'function') {
-        askForm.requestSubmit();
-      } else {
-        askForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      }
-    });
-  }
-
-  if (askForm && askInput && chatUrl) {
-    askForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      if (askPending) return;
-      const message = String(askInput.value || '').trim();
-      if (!message) return;
-
-      addAskMessage('user', message);
-      askInput.value = '';
-      setAskPending(true);
-
-      try {
-        const response = await fetch(chatUrl, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCookie('csrftoken'),
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-          body: JSON.stringify({
-            message,
-            conversation_id: conversationId,
-          }),
-        });
-
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          addAskMessage('assistant', `Chat unavailable (${String(payload.error || 'request_failed')}).`);
-          return;
-        }
-
-        const nextConversationId = String(payload.conversation_id || '').trim();
-        if (nextConversationId) {
-          conversationId = nextConversationId;
-          try {
-            window.localStorage.setItem('overview_ask_conversation_id', conversationId);
-          } catch (error) {
-            // Ignore storage write issues.
-          }
-        }
-        addAskMessage('assistant', String(payload.reply || '').trim() || 'No response.');
-      } catch (error) {
-        addAskMessage('assistant', 'Chat unavailable right now.');
-      } finally {
-        setAskPending(false);
-        askInput.focus();
-      }
-    });
-  }
-
-  if (askSudo) {
-    askSudo.addEventListener('click', async (event) => {
-      event.preventDefault();
-      const isSuperuser = dashboard.getAttribute('data-superuser') === '1';
-      if (!isSuperuser) {
-        return;
-      }
-
-      if (typeof window.openAskAlshivalWidget === 'function') {
-        await window.openAskAlshivalWidget({
-          mode: 'shell',
-          title: 'System Terminal',
-          hintText: 'Superuser host login shell',
-        });
-        return;
-      }
-
-      addAskMessage('assistant', 'Sudo mode terminal is unavailable on this page.');
-    });
+  const askWidgetSlot = dashboard.querySelector('[data-overview-ask-widget]');
+  if (askWidgetSlot && typeof window.mountAskAlshivalWidget === 'function') {
+    document.body.classList.add('overview-ask-embedded');
+    window.mountAskAlshivalWidget({
+      container: askWidgetSlot,
+      title: 'Ask Alshival',
+      autoFocus: false,
+      inlineShell: true,
+    }).catch(() => {});
   }
 
   const calendarAlertOpenButton = dashboard.querySelector('[data-calendar-alert-open]');
@@ -2397,162 +2392,4 @@
     }
   }
 
-  const notifyList = dashboard.querySelector('[data-notify-list]');
-  const notifyUnread = dashboard.querySelector('[data-notify-unread]');
-  const notifyMarkRead = dashboard.querySelector('[data-notify-mark-read]');
-  const notifyClear = dashboard.querySelector('[data-notify-clear]');
-  const notificationsUrl = dashboard.getAttribute('data-notifications-url') || '';
-  const notificationsMarkReadUrl = dashboard.getAttribute('data-notifications-mark-read-url') || '';
-  const notificationsClearUrl = dashboard.getAttribute('data-notifications-clear-url') || '';
-
-  const clearNotifyList = () => {
-    if (!notifyList) return;
-    while (notifyList.firstChild) {
-      notifyList.removeChild(notifyList.firstChild);
-    }
-  };
-
-  const renderNotifyEmpty = (message) => {
-    if (!notifyList) return;
-    clearNotifyList();
-    const empty = document.createElement('p');
-    empty.className = 'notification-empty';
-    empty.textContent = message;
-    notifyList.appendChild(empty);
-  };
-
-  const formatWhen = (value) => {
-    if (!value) return '';
-    const normalized = value.includes('T') ? value : value.replace(' ', 'T');
-    const parsed = new Date(normalized.endsWith('Z') ? normalized : `${normalized}Z`);
-    if (Number.isNaN(parsed.getTime())) {
-      return value;
-    }
-    try {
-      return new Intl.DateTimeFormat([], {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      }).format(parsed);
-    } catch (error) {
-      return parsed.toLocaleString();
-    }
-  };
-
-  const setUnread = (count) => {
-    if (!notifyUnread) return;
-    const value = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
-    notifyUnread.textContent = `${value} unread`;
-  };
-
-  const renderNotifications = (items) => {
-    if (!notifyList) return;
-    clearNotifyList();
-    if (!Array.isArray(items) || items.length === 0) {
-      renderNotifyEmpty('No alerts yet.');
-      return;
-    }
-
-    items.forEach((item) => {
-      const level = String(item && item.level ? item.level : 'info').toLowerCase();
-      const title = String(item && item.title ? item.title : 'Notification');
-      const body = String(item && item.body ? item.body : '');
-      const createdAt = String(item && item.created_at ? item.created_at : '');
-
-      const card = document.createElement('article');
-      card.className = `notification-item notification-item--${level}`;
-
-      const head = document.createElement('header');
-      head.className = 'notification-item__head';
-
-      const titleNode = document.createElement('h4');
-      titleNode.className = 'notification-item__title';
-      titleNode.textContent = title;
-
-      const timeNode = document.createElement('time');
-      timeNode.className = 'notification-item__time';
-      timeNode.textContent = formatWhen(createdAt);
-
-      head.appendChild(titleNode);
-      head.appendChild(timeNode);
-
-      const bodyNode = document.createElement('p');
-      bodyNode.className = 'notification-item__body';
-      bodyNode.textContent = body;
-
-      card.appendChild(head);
-      card.appendChild(bodyNode);
-      notifyList.appendChild(card);
-    });
-  };
-
-  const loadNotifications = async () => {
-    if (!notificationsUrl) return;
-    try {
-      const response = await fetch(`${notificationsUrl}?limit=8`, {
-        method: 'GET',
-        credentials: 'same-origin',
-      });
-      if (!response.ok) {
-        throw new Error(`notifications_fetch_${response.status}`);
-      }
-      const payload = await response.json();
-      const unread = Number(payload && payload.unread_count ? payload.unread_count : 0);
-      const items = payload && Array.isArray(payload.items) ? payload.items : [];
-      setUnread(unread);
-      renderNotifications(items);
-    } catch (error) {
-      renderNotifyEmpty('Unable to load notifications.');
-    }
-  };
-
-  const markAllNotificationsRead = async () => {
-    if (!notificationsMarkReadUrl) return;
-    try {
-      const response = await fetch(notificationsMarkReadUrl, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'X-CSRFToken': getCookie('csrftoken'),
-        },
-      });
-      if (!response.ok) return;
-      await loadNotifications();
-    } catch (error) {
-      // Keep controls interactive when request fails.
-    }
-  };
-
-  const clearAllNotifications = async () => {
-    if (!notificationsClearUrl) return;
-    try {
-      const response = await fetch(notificationsClearUrl, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'X-CSRFToken': getCookie('csrftoken'),
-        },
-      });
-      if (!response.ok) return;
-      setUnread(0);
-      renderNotifyEmpty('No alerts yet.');
-    } catch (error) {
-      // Keep controls interactive when request fails.
-    }
-  };
-
-  if (notifyMarkRead) {
-    notifyMarkRead.addEventListener('click', async () => {
-      await markAllNotificationsRead();
-    });
-  }
-
-  if (notifyClear) {
-    notifyClear.addEventListener('click', async () => {
-      await clearAllNotifications();
-    });
-  }
-
-  loadNotifications();
 })();

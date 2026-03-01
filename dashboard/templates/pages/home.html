@@ -5,10 +5,9 @@
 
 {% block page_content %}
 <section
-  class="overview-dashboard"
+  class="overview-dashboard overview-dashboard--full"
   data-overview-dashboard
   data-superuser="{% if request.user.is_superuser %}1{% else %}0{% endif %}"
-  data-chat-url="{% url 'ask_alshival_chat' %}"
   data-asana-complete-url-template="{% url 'update_asana_task_completion' task_gid='__TASK_GID__' %}"
   data-asana-board-task-create-url-template="{% url 'create_asana_board_task' board_gid='__BOARD_GID__' %}"
   data-asana-task-delete-url-template="{% url 'delete_asana_task' task_gid='__TASK_GID__' %}"
@@ -26,10 +25,7 @@
   data-asana-assign-url-template="{% url 'update_asana_task_assignee' task_gid='__TASK_GID__' %}"
   data-asana-workspace-members-url-template="{% url 'list_asana_workspace_members' workspace_gid='__WORKSPACE_GID__' %}"
   data-agenda-item-map-url="{% url 'update_overview_agenda_item_resource_mapping' %}"
-  data-asana-completed-window-days="{{ asana_completed_window_days }}"
-  data-notifications-url="{% url 'notifications_feed' %}"
-  data-notifications-mark-read-url="{% url 'notifications_mark_all_read' %}"
-  data-notifications-clear-url="{% url 'notifications_clear_all' %}">
+  data-asana-completed-window-days="{{ asana_completed_window_days }}">
   <div class="overview-main">
     <article class="card overview-intro">
       <div>
@@ -65,7 +61,10 @@
       </article>
     </section>
 
-    <section class="overview-panels">
+    <section class="overview-panels overview-panels--with-ask">
+      <article class="card overview-panel overview-chat-card">
+        <div class="overview-ask-widget-slot" data-overview-ask-widget aria-label="Ask Alshival panel"></div>
+      </article>
       <article class="card overview-panel team-planner-panel planner-panel overview-planner-panel" data-overview-planner>
         <header class="planner-head">
           <div class="planner-title">
@@ -134,9 +133,8 @@
             </div>
             <strong class="planner-month-label" data-planner-month></strong>
             <div class="planner-view-switch" role="tablist" aria-label="Calendar view">
-              <button class="planner-view-btn is-active" type="button" data-planner-view="month">Month</button>
-              <button class="planner-view-btn" type="button" data-planner-view="agenda">Agenda</button>
-              <button class="planner-view-btn" type="button" data-planner-view="month-list">All</button>
+              <button class="planner-view-btn is-active" type="button" data-planner-view="tasks">Tasks</button>
+              <button class="planner-view-btn" type="button" data-planner-view="all">All</button>
             </div>
           </div>
         </div>
@@ -147,58 +145,13 @@
           </section>
           <section class="planner-agenda-shell">
             <div class="planner-agenda-head">
-              <h4 data-planner-agenda-title>Agenda</h4>
+              <h4 data-planner-agenda-title>Tasks</h4>
               <span class="text-muted small" data-planner-selected></span>
             </div>
             <div class="planner-agenda" data-planner-agenda></div>
           </section>
         </div>
 
-        <form class="planner-quick-add" data-planner-form>
-          <label>
-            <span>Task</span>
-            <input type="text" maxlength="180" required data-planner-title placeholder="Sprint planning, customer review, deploy window..." />
-          </label>
-          <div class="planner-quick-grid">
-            <label>
-              <span>Date</span>
-              <input type="date" required data-planner-date />
-            </label>
-            <label>
-              <span>Time</span>
-              <input type="time" data-planner-time />
-            </label>
-            <label>
-              <span>Category</span>
-              <select data-planner-kind>
-                <option value="meeting">Meeting</option>
-                <option value="delivery">Delivery</option>
-                <option value="follow-up">Follow-up</option>
-                <option value="review">Review</option>
-              </select>
-            </label>
-            <div class="planner-submit-wrap">
-              <button type="submit" class="secondary-btn">Add event</button>
-            </div>
-          </div>
-        </form>
-
-        <div class="planner-integrations">
-          <div class="planner-integration-card">
-            <div>
-              <strong>Google Calendar</strong>
-              <p class="text-muted small">Two-way sync UI ready for event and attendee mapping.</p>
-            </div>
-            <span class="status warning">Staged</span>
-          </div>
-          <div class="planner-integration-card">
-            <div>
-              <strong>Project Milestones</strong>
-              <p class="text-muted small">Planned surfacing of release windows and handoff checkpoints.</p>
-            </div>
-            <span class="status warning">Staged</span>
-          </div>
-        </div>
       </article>
 
       <div class="modal resource-alert-modal" id="calendar-alerts" data-calendar-alert-modal aria-hidden="true">
@@ -317,21 +270,6 @@
     </article>
   </div>
 
-  <aside class="overview-side">
-    <article class="card overview-notify-card">
-      <div class="overview-panel-head">
-        <h3>Notifications</h3>
-        <span class="tag" data-notify-unread>{{ notification_unread_count }} unread</span>
-      </div>
-      <div class="overview-notify-actions">
-        <button type="button" class="ghost-btn" data-notify-mark-read>Mark all read</button>
-        <button type="button" class="ghost-btn" data-notify-clear>Clear all</button>
-      </div>
-      <div class="overview-notify-list" data-notify-list>
-        <p class="notification-empty">Loading notifications...</p>
-      </div>
-    </article>
-  </aside>
 </section>
 {{ overview_calendar_external_items|json_script:"overview-planner-external-items" }}
 {{ asana_overview.tasks|json_script:"overview-asana-tasks" }}
@@ -345,6 +283,6 @@
 
 {% block page_js %}
 {{ block.super }}
-<script src="{% static 'js/planner-ui.js' %}"></script>
-<script src="{% static 'js/home-overview.js' %}"></script>
+<script src="{% static 'js/planner-ui.js' %}?v=20260301a"></script>
+<script src="{% static 'js/home-overview.js' %}?v=20260301a"></script>
 {% endblock page_js %}

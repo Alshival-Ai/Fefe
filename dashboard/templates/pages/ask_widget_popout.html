@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+
+{% block title %}Ask Alshival{% endblock title %}
+
+{% block content %}
+<section class="ask-widget-popout-page">
+  <div class="ask-widget-popout-frame">
+    <div class="ask-widget-popout-mount" data-ask-widget-popout-mount></div>
+  </div>
+</section>
+{% endblock content %}
+
+{% block page_js %}
+{{ block.super }}
+<script>
+(() => {
+  document.body.classList.add('ask-widget-popout-body');
+  const mount = document.querySelector('[data-ask-widget-popout-mount]');
+  if (!mount || typeof window.mountAskAlshivalWidget !== 'function') {
+    return;
+  }
+  window.mountAskAlshivalWidget({
+    container: mount,
+    title: 'Ask Alshival',
+    autoFocus: true,
+    showPopout: false,
+    inlineShell: true,
+  }).catch(() => {});
+})();
+</script>
+{% endblock page_js %}

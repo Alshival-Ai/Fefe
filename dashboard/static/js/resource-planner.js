@@ -77,6 +77,8 @@
 
   const asanaBoardRowsFromTaskRaw = (taskRow) => {
     const links = Array.isArray(taskRow && taskRow.project_links) ? taskRow.project_links : [];
+    const workspaceGid = String(taskRow && taskRow.workspace_gid ? taskRow.workspace_gid : '').trim();
+    const workspaceName = String(taskRow && taskRow.workspace_name ? taskRow.workspace_name : '').trim();
     const rows = [];
     const seen = new Set();
     links.forEach((link) => {
@@ -89,6 +91,8 @@
         gid,
         name,
         url: String(link.url || '').trim(),
+        workspace_gid: workspaceGid,
+        workspace_name: workspaceName,
       });
     });
     return rows;
@@ -108,6 +112,7 @@
         gid,
         name,
         url: String(board.url || '').trim(),
+        workspace_gid: String(board.workspace_gid || board.workspaceGid || '').trim(),
         workspace_name: String(board.workspace_name || board.workspaceName || '').trim(),
       });
     });
@@ -127,6 +132,7 @@
           gid,
           name,
           url: String(rawBoard.url || '').trim(),
+          workspace_gid: String(rawBoard.workspace_gid || rawBoard.workspaceGid || '').trim(),
           workspace_name: String(rawBoard.workspace_name || rawBoard.workspaceName || '').trim(),
         };
         const existing = mergedByGid.get(gid);
@@ -135,6 +141,7 @@
           return;
         }
         if (!existing.url && normalized.url) existing.url = normalized.url;
+        if (!existing.workspace_gid && normalized.workspace_gid) existing.workspace_gid = normalized.workspace_gid;
         if (!existing.workspace_name && normalized.workspace_name) existing.workspace_name = normalized.workspace_name;
       });
     });
@@ -172,12 +179,28 @@
     }
   };
 
+  const toYmdLocal = (value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+
+  const addDaysToYmd = (ymd, days) => {
+    const base = String(ymd || '').trim();
+    if (!base) return '';
+    const date = new Date(`${base}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return '';
+    date.setDate(date.getDate() + Number(days || 0));
+    return toYmdLocal(date);
+  };
+
   const resourceUuid = normalizeUuid(plannerRoot.getAttribute('data-resource-uuid') || '');
   const resourceId = String(plannerRoot.getAttribute('data-resource-planner-id') || '').trim();
+  const isSuperuser = plannerRoot.getAttribute('data-superuser') === '1';
   const plannerStorageKey = `resource_planner_items_${resourceId || 'default'}`;
   const completedWindowDays = Math.max(
     1,
-    Math.min(60, Number.parseInt(String(plannerRoot.getAttribute('data-asana-completed-window-days') || '14'), 10) || 14)
+    Math.min(90, Number.parseInt(String(plannerRoot.getAttribute('data-asana-completed-window-days') || '30'), 10) || 30)
   );
 
   const asanaCompleteUrlTemplate = plannerRoot.getAttribute('data-asana-complete-url-template') || '';
@@ -187,6 +210,7 @@
   const asanaCommentAddUrlTemplate = plannerRoot.getAttribute('data-asana-comment-add-url-template') || '';
   const asanaBoardMapUrlTemplate = plannerRoot.getAttribute('data-asana-board-map-url-template') || '';
   const asanaTaskMapUrlTemplate = plannerRoot.getAttribute('data-asana-task-map-url-template') || '';
+  const asanaWorkspaceMembersUrlTemplate = plannerRoot.getAttribute('data-asana-workspace-members-url-template') || '';
 
   const asanaTasksNode = document.getElementById('resource-asana-tasks');
   const asanaBoardsNode = document.getElementById('resource-asana-boards');
@@ -208,6 +232,7 @@
   let taskResourceMappings = normalizeMappingMap(parseJsonNode(taskMappingsNode, {}));
   let plannerExternalItems = [];
   let plannerController = null;
+  const workspaceMembersCache = new Map();
 
   const asanaResourceLookup = () => {
     const lookup = new Map();
@@ -351,6 +376,12 @@
     return asanaTaskMapUrlTemplate.replace('__TASK_GID__', encodeURIComponent(gid));
   };
 
+  const asanaWorkspaceMembersUrlForWorkspace = (workspaceGid) => {
+    const gid = String(workspaceGid || '').trim();
+    if (!asanaWorkspaceMembersUrlTemplate || !gid) return '';
+    return asanaWorkspaceMembersUrlTemplate.replace('__WORKSPACE_GID__', encodeURIComponent(gid));
+  };
+
   const isTaskCompletedWithinWindow = (taskRow) => {
     if (!taskRow || typeof taskRow !== 'object' || !Boolean(taskRow.completed)) {
       return false;
@@ -392,6 +423,39 @@
       throw new Error(String(parsed && parsed.error ? parsed.error : 'request_failed'));
     }
     return parsed;
+  };
+
+  const loadWorkspaceMembers = async (workspaceGid) => {
+    const gid = String(workspaceGid || '').trim();
+    if (!gid) return [];
+    if (workspaceMembersCache.has(gid)) {
+      return workspaceMembersCache.get(gid);
+    }
+    const membersUrl = asanaWorkspaceMembersUrlForWorkspace(gid);
+    if (!membersUrl) {
+      workspaceMembersCache.set(gid, []);
+      return [];
+    }
+    const payload = await fetchJson(membersUrl);
+    const seen = new Set();
+    const members = (Array.isArray(payload && payload.members) ? payload.members : [])
+      .map((member) => ({
+        gid: String(member && member.gid ? member.gid : '').trim(),
+        name: String(member && member.name ? member.name : '').trim(),
+        email: String(member && member.email ? member.email : '').trim(),
+      }))
+      .filter((member) => {
+        if (!member.gid || seen.has(member.gid)) return false;
+        seen.add(member.gid);
+        return true;
+      })
+      .sort((left, right) => {
+        const leftName = String(left.name || left.email || left.gid).trim().toLowerCase();
+        const rightName = String(right.name || right.email || right.gid).trim().toLowerCase();
+        return leftName.localeCompare(rightName);
+      });
+    workspaceMembersCache.set(gid, members);
+    return members;
   };
 
   const buildPlannerExternalItems = () => asanaTasks
@@ -663,6 +727,53 @@
     modalApi.actions.appendChild(cancelBtn);
 
     const boardLink = asanaBoardLinkByGid(boardGid);
+    const boardRow = asanaBoardRowByGid(boardGid);
+    const boardWorkspaceGid = String(
+      (boardRow && (boardRow.workspace_gid || boardRow.workspaceGid))
+      || (section && (section.workspace_gid || section.workspaceGid))
+      || ''
+    ).trim();
+    let assigneeSelect = null;
+    if (isSuperuser) {
+      const assigneeField = document.createElement('label');
+      const assigneeLabel = document.createElement('span');
+      assigneeLabel.textContent = 'Assignee (superuser only)';
+      assigneeField.appendChild(assigneeLabel);
+
+      assigneeSelect = document.createElement('select');
+      const meOption = document.createElement('option');
+      meOption.value = '';
+      meOption.textContent = 'Me (default)';
+      assigneeSelect.appendChild(meOption);
+      assigneeField.appendChild(assigneeSelect);
+      form.appendChild(assigneeField);
+
+      if (boardWorkspaceGid) {
+        try {
+          const members = await loadWorkspaceMembers(boardWorkspaceGid);
+          members.forEach((member) => {
+            const memberGid = String(member.gid || '').trim();
+            if (!memberGid) return;
+            const option = document.createElement('option');
+            option.value = memberGid;
+            option.textContent = String(member.name || member.email || memberGid).trim();
+            assigneeSelect.appendChild(option);
+          });
+        } catch (error) {
+          assigneeSelect.disabled = true;
+          const warning = document.createElement('div');
+          warning.className = 'text-muted small';
+          warning.textContent = 'Unable to load workspace members. Task will be assigned to you.';
+          assigneeField.appendChild(warning);
+        }
+      } else {
+        assigneeSelect.disabled = true;
+        const warning = document.createElement('div');
+        warning.className = 'text-muted small';
+        warning.textContent = 'Board workspace unavailable. Task will be assigned to you.';
+        assigneeField.appendChild(warning);
+      }
+    }
     if (boardLink.url) {
       const openBoardBtn = document.createElement('a');
       openBoardBtn.className = 'ghost-btn';
@@ -680,15 +791,33 @@
       const dueDate = String(dueDateInput && dueDateInput.value ? dueDateInput.value : '').trim();
       const dueTime = String(dueTimeInput && dueTimeInput.value ? dueTimeInput.value : '').trim();
       const notes = String(notesInput && notesInput.value ? notesInput.value : '').trim();
+      const assigneeGid = String(
+        isSuperuser && assigneeSelect && !assigneeSelect.disabled && assigneeSelect.value
+          ? assigneeSelect.value
+          : ''
+      ).trim();
+      const wasAssigneeDisabled = Boolean(assigneeSelect && assigneeSelect.disabled);
 
       createBtn.disabled = true;
+      if (assigneeSelect) assigneeSelect.disabled = true;
       try {
-        const payload = await postJson(createUrl, {
+        const createRequest = {
           name: taskName,
           due_date: dueDate,
           due_time: dueTime,
           notes,
-        });
+        };
+        if (assigneeGid) {
+          createRequest.assignee_gid = assigneeGid;
+        }
+        const payload = await postJson(createUrl, createRequest);
+        const selectedAssigneeName = assigneeGid && assigneeSelect
+          ? String(
+            assigneeSelect.options[assigneeSelect.selectedIndex]
+              ? assigneeSelect.options[assigneeSelect.selectedIndex].textContent
+              : ''
+          ).trim()
+          : '';
         const taskRow = payload && payload.task && typeof payload.task === 'object'
           ? payload.task
           : {
@@ -699,6 +828,8 @@
             completed: false,
             completed_at: '',
             project_links: [{ gid: boardGid, name: boardName, url: boardLink.url || '' }],
+            assignee_gid: assigneeGid,
+            assignee_name: selectedAssigneeName,
           };
         upsertAsanaTaskRow(taskRow);
         refreshPlannerExternalItems();
@@ -706,6 +837,7 @@
       } catch (error) {
         window.alert(`Unable to create Asana task: ${String(error && error.message ? error.message : 'request_failed')}`);
       } finally {
+        if (assigneeSelect) assigneeSelect.disabled = wasAssigneeDisabled;
         createBtn.disabled = false;
       }
     });
@@ -1026,18 +1158,29 @@
   };
 
   const openAsanaAgendaSections = (context) => {
-    const view = String(context && context.view ? context.view : '').trim().toLowerCase();
-    if (view !== 'agenda') return [];
+    const rawView = String(context && context.view ? context.view : '').trim().toLowerCase();
+    const view = (rawView === 'all' || rawView === 'month-list') ? 'all' : 'tasks';
     const activeFilter = String(context && context.activeFilter ? context.activeFilter : 'all').trim().toLowerCase();
     if (activeFilter !== 'all') return [];
     const includeCompletedWindow = true;
+    const todayKey = toYmdLocal(new Date());
+    const selectedDateKey = String(context && context.selectedDate ? context.selectedDate : '').trim() || todayKey;
+    const tasksStartKey = selectedDateKey;
+    const tasksEndKey = addDaysToYmd(tasksStartKey, 13) || tasksStartKey;
+    const allHistoryStartKey = addDaysToYmd(todayKey, -(completedWindowDays - 1)) || todayKey;
 
     const candidateRows = asanaTasks
       .filter((row) => row && typeof row === 'object')
       .filter((row) => taskMappedToResource(row))
       .filter((row) => {
-        if (!Boolean(row.completed)) return true;
-        return includeCompletedWindow && isTaskCompletedWithinWindow(row);
+        const completed = Boolean(row.completed);
+        const dueDate = String(row && row.due_date ? row.due_date : '').trim();
+        if (view === 'all') {
+          if (!completed) return true;
+          return includeCompletedWindow && isTaskCompletedWithinWindow(row);
+        }
+        if (!dueDate) return true;
+        return dueDate >= tasksStartKey && dueDate <= tasksEndKey;
       });
 
     const normalizedBoardId = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -1144,9 +1287,9 @@
   refreshPlannerExternalItems();
   plannerController = window.AlshivalPlanner.init(plannerRoot, {
     storageKey: plannerStorageKey,
-    listWindowDays: 21,
+    listHistoryDays: 30,
     monthEmptyText: 'No resource items for this day.',
-    listEmptyText: 'No resource items scheduled in this range.',
+    listEmptyText: 'No resource tasks in the last 30 days or upcoming.',
     seedItems: () => [],
     externalItems: () => plannerExternalItems,
     agendaSections: openAsanaAgendaSections,

@@ -28,6 +28,39 @@
         <p class="topbar-search-empty" data-topbar-search-empty>Type at least 2 characters.</p>
       </section>
     </label>
+    <div
+      class="notification-menu"
+      data-notification-menu
+      data-list-url="{% url 'notifications_feed' %}"
+      data-mark-read-url="{% url 'notifications_mark_all_read' %}"
+      data-clear-url="{% url 'notifications_clear_all' %}">
+      <button
+        class="icon-btn notification-toggle"
+        type="button"
+        aria-label="Open notifications"
+        aria-haspopup="true"
+        aria-expanded="false"
+        data-notification-toggle>
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4a2 2 0 0 1-.6-1.4V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 0 1-6 0" />
+        </svg>
+        <span
+          class="notification-badge{% if sidebar_workspace_widget.unread_notifications|default:0 < 1 %} d-none{% endif %}"
+          data-notification-badge>{{ sidebar_workspace_widget.unread_notifications|default:0 }}</span>
+      </button>
+      <section class="notification-dropdown" hidden data-notification-dropdown>
+        <header class="notification-dropdown__header">
+          <h3 class="notification-dropdown__title">Notifications</h3>
+          <div class="notification-dropdown__actions">
+            <button class="notification-dropdown__clear" type="button" data-notification-mark-read>Mark read</button>
+            <button class="notification-dropdown__trash" type="button" aria-label="Clear all notifications" data-notification-clear-all>Clear</button>
+          </div>
+        </header>
+        <div class="notification-list" data-notification-list>
+          <p class="notification-empty">Loading notifications...</p>
+        </div>
+      </section>
+    </div>
     <label class="theme-switcher" aria-label="Light/Dark Mode">
       <input class="theme__toggle theme-switcher__input" type="checkbox" role="switch" name="theme" value="dark">
       <span class="theme-switcher__slider">

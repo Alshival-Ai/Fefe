@@ -250,9 +250,9 @@
     const onActionError = typeof options.onActionError === 'function' ? options.onActionError : null;
     const onInlineComment = typeof options.onInlineComment === 'function' ? options.onInlineComment : null;
     const onItemClick = typeof options.onItemClick === 'function' ? options.onItemClick : null;
-    const listWindowDays = Math.max(7, Number.parseInt(String(options.listWindowDays || '21'), 10) || 21);
-    const monthEmptyText = String(options.monthEmptyText || 'No agenda items for this day.');
-    const listEmptyText = String(options.listEmptyText || 'No upcoming items in this range.');
+    const listHistoryDays = Math.max(1, Number.parseInt(String(options.listHistoryDays || '30'), 10) || 30);
+    const monthEmptyText = String(options.monthEmptyText || 'No tasks for this day.');
+    const listEmptyText = String(options.listEmptyText || 'No tasks in this timeline.');
     const showMonthTimelineItemsOption = options.showMonthTimelineItems;
     const showListTimelineItemsOption = options.showListTimelineItems;
     const readOnly = Boolean(options.readOnly);
@@ -260,14 +260,148 @@
     let selectedDate = toYmd(new Date());
     let calendarCursor = monthFloor(new Date());
     let activeFilter = 'all';
-    let activeView = 'month';
+    let activeView = 'tasks';
     let localItems = [];
     let remoteItems = [];
     let items = [];
     const togglePendingById = new Set();
+    const togglePointerById = new Map();
     const agendaSectionToggleIndex = new Map();
     const agendaSectionItemIndex = new Map();
     const agendaSectionActionIndex = new Map();
+    let activeDoneConfirm = null;
+
+    const closeDoneConfirm = (result = false) => {
+      if (!activeDoneConfirm) return;
+      const current = activeDoneConfirm;
+      activeDoneConfirm = null;
+      if (typeof current.cleanup === 'function') {
+        current.cleanup();
+      }
+      current.resolve(Boolean(result));
+    };
+
+    const positionDoneConfirm = (node, anchor) => {
+      if (!node) return;
+      const margin = 8;
+      const offset = 12;
+      const width = Math.max(1, node.offsetWidth || 0);
+      const height = Math.max(1, node.offsetHeight || 0);
+      const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 0);
+      const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 0);
+      let left = Number(anchor && anchor.x) + offset;
+      let top = Number(anchor && anchor.y) + offset;
+      if (!Number.isFinite(left)) left = margin;
+      if (!Number.isFinite(top)) top = margin;
+      if ((left + width) > (viewportWidth - margin)) {
+        left = Number(anchor && anchor.x) - width - offset;
+      }
+      if ((top + height) > (viewportHeight - margin)) {
+        top = Number(anchor && anchor.y) - height - offset;
+      }
+      left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
+      top = Math.max(margin, Math.min(top, viewportHeight - height - margin));
+      node.style.left = `${Math.round(left)}px`;
+      node.style.top = `${Math.round(top)}px`;
+    };
+
+    const defaultToggleAnchor = (toggle) => {
+      if (!toggle || typeof toggle.getBoundingClientRect !== 'function') {
+        return { x: 24, y: 24 };
+      }
+      const rect = toggle.getBoundingClientRect();
+      return {
+        x: rect.left + (rect.width / 2),
+        y: rect.top + (rect.height / 2),
+      };
+    };
+
+    const consumeToggleAnchor = (toggleId, toggle) => {
+      const stored = toggleId ? togglePointerById.get(toggleId) : null;
+      if (toggleId) togglePointerById.delete(toggleId);
+      if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
+        return stored;
+      }
+      return defaultToggleAnchor(toggle);
+    };
+
+    const showDoneConfirm = (anchor, options = {}) => new Promise((resolve) => {
+      closeDoneConfirm(false);
+      const promptLabel = String(options.promptLabel || 'Mark Done?').trim() || 'Mark Done?';
+      const confirmAriaLabel = String(options.confirmAriaLabel || 'Confirm status change').trim() || 'Confirm status change';
+      const container = document.createElement('div');
+      container.className = 'planner-done-confirm';
+      container.setAttribute('role', 'dialog');
+      container.setAttribute('aria-label', 'Confirm mark done');
+      container.innerHTML = `
+        <div class="planner-done-confirm__label">${promptLabel}</div>
+        <div class="planner-done-confirm__actions">
+          <button type="button" class="planner-done-confirm__btn planner-done-confirm__btn--confirm" data-done-confirm="yes" aria-label="${confirmAriaLabel}">✓</button>
+          <button type="button" class="planner-done-confirm__btn planner-done-confirm__btn--cancel" data-done-confirm="no" aria-label="Cancel mark done">✕</button>
+        </div>
+      `;
+      document.body.appendChild(container);
+      positionDoneConfirm(container, anchor);
+      window.requestAnimationFrame(() => {
+        positionDoneConfirm(container, anchor);
+      });
+
+      const confirmButton = container.querySelector('[data-done-confirm="yes"]');
+      const cancelButton = container.querySelector('[data-done-confirm="no"]');
+
+      const onDocumentPointerDown = (event) => {
+        const target = event.target;
+        if (target && container.contains(target)) return;
+        closeDoneConfirm(false);
+      };
+      const onKeyDown = (event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        closeDoneConfirm(false);
+      };
+      const onResize = () => {
+        positionDoneConfirm(container, anchor);
+      };
+
+      const cleanup = () => {
+        document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+        document.removeEventListener('keydown', onKeyDown);
+        window.removeEventListener('resize', onResize);
+        if (container.parentNode) {
+          container.parentNode.removeChild(container);
+        }
+      };
+
+      activeDoneConfirm = { resolve, cleanup };
+      document.addEventListener('pointerdown', onDocumentPointerDown, true);
+      document.addEventListener('keydown', onKeyDown);
+      window.addEventListener('resize', onResize);
+
+      if (confirmButton) {
+        confirmButton.addEventListener('click', () => closeDoneConfirm(true));
+        window.requestAnimationFrame(() => {
+          confirmButton.focus();
+        });
+      }
+      if (cancelButton) {
+        cancelButton.addEventListener('click', () => closeDoneConfirm(false));
+      }
+    });
+
+    const confirmDoneToggle = async (toggleId, toggle, previousDone, nextDone) => {
+      if (Boolean(previousDone) === Boolean(nextDone)) return true;
+      const anchor = consumeToggleAnchor(toggleId, toggle);
+      if (Boolean(nextDone)) {
+        return showDoneConfirm(anchor, {
+          promptLabel: 'Mark Done?',
+          confirmAriaLabel: 'Confirm mark done',
+        });
+      }
+      return showDoneConfirm(anchor, {
+        promptLabel: 'Mark Not Done?',
+        confirmAriaLabel: 'Confirm mark not done',
+      });
+    };
 
     const mergeItems = () => {
       items = normalizeItems(
@@ -348,7 +482,12 @@
 
     const showTimelineItemsForView = (view) => {
       const normalizedView = String(view || '').trim().toLowerCase();
-      const option = normalizedView === 'agenda'
+      const option = (
+        normalizedView === 'tasks'
+        || normalizedView === 'all'
+        || normalizedView === 'agenda'
+        || normalizedView === 'month-list'
+      )
         ? showListTimelineItemsOption
         : showMonthTimelineItemsOption;
       if (typeof option === 'boolean') return option;
@@ -428,7 +567,7 @@
         const view = String(button.getAttribute('data-planner-view') || '').trim().toLowerCase();
         button.classList.toggle('is-active', view === activeView);
       });
-      root.classList.toggle('planner-panel--agenda', activeView === 'agenda' || activeView === 'month-list');
+      root.classList.remove('planner-panel--agenda');
     };
 
     const buildAgendaItem = (item) => {
@@ -781,15 +920,19 @@
     };
 
     const renderAgendaMonth = () => {
-      if (agendaTitle) agendaTitle.textContent = 'Agenda';
-      selectedLabel.textContent = `Selected: ${prettyDay(selectedDate) || 'None'}`;
+      if (agendaTitle) agendaTitle.textContent = 'Tasks';
+      const startDate = parseYmd(selectedDate) || new Date();
+      const endDate = addDays(startDate, 13) || startDate;
+      const startKey = toYmd(startDate);
+      const endKey = toYmd(endDate);
+      selectedLabel.textContent = `${prettyDay(startKey)} to ${prettyDay(endKey)}`;
 
-      const dayItems = showTimelineItemsForView('month')
+      const dayItems = showTimelineItemsForView('tasks')
         ? filteredItems()
-          .filter((item) => item.date === selectedDate)
+          .filter((item) => item.date >= startKey && item.date <= endKey)
           .sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`))
         : [];
-      const extraSections = resolveAgendaSections('month');
+      const extraSections = resolveAgendaSections('tasks');
 
       if (!dayItems.length && !extraSections.length) {
         renderAgendaEmpty(monthEmptyText);
@@ -797,9 +940,6 @@
       }
 
       while (agenda.firstChild) agenda.removeChild(agenda.firstChild);
-      dayItems.forEach((item) => {
-        agenda.appendChild(buildAgendaItem(item));
-      });
       if (extraSections.length) {
         appendAgendaSections(extraSections);
       } else {
@@ -807,23 +947,24 @@
         agendaSectionItemIndex.clear();
         agendaSectionActionIndex.clear();
       }
+      dayItems.forEach((item) => {
+        agenda.appendChild(buildAgendaItem(item));
+      });
     };
 
     const renderAgendaList = () => {
-      const startDate = parseYmd(selectedDate) || new Date();
-      const endDate = addDays(startDate, listWindowDays - 1) || startDate;
-      const startKey = toYmd(startDate);
-      const endKey = toYmd(endDate);
+      const historyStartDate = addDays(new Date(), -(listHistoryDays - 1)) || new Date();
+      const historyStartKey = toYmd(historyStartDate);
 
-      if (agendaTitle) agendaTitle.textContent = `Agenda (${listWindowDays}d)`;
-      selectedLabel.textContent = `${prettyDay(startKey)} to ${prettyDay(endKey)}`;
+      if (agendaTitle) agendaTitle.textContent = 'Tasks';
+      selectedLabel.textContent = `Last ${listHistoryDays} days + upcoming`;
 
-      const timelineItems = showTimelineItemsForView('agenda')
+      const timelineItems = showTimelineItemsForView('all')
         ? filteredItems()
-          .filter((item) => item.date >= startKey && item.date <= endKey)
+          .filter((item) => item.date >= historyStartKey)
           .sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`))
         : [];
-      const extraSections = resolveAgendaSections('agenda');
+      const extraSections = resolveAgendaSections('all');
 
       if (!timelineItems.length && !extraSections.length) {
         renderAgendaEmpty(listEmptyText);
@@ -831,6 +972,13 @@
       }
 
       while (agenda.firstChild) agenda.removeChild(agenda.firstChild);
+      if (extraSections.length) {
+        appendAgendaSections(extraSections);
+      } else {
+        agendaSectionToggleIndex.clear();
+        agendaSectionItemIndex.clear();
+        agendaSectionActionIndex.clear();
+      }
       let currentDateKey = '';
       let group = null;
       let groupBody = null;
@@ -862,13 +1010,6 @@
         }
         if (groupBody) groupBody.appendChild(buildAgendaItem(item));
       });
-      if (extraSections.length) {
-        appendAgendaSections(extraSections);
-      } else {
-        agendaSectionToggleIndex.clear();
-        agendaSectionItemIndex.clear();
-        agendaSectionActionIndex.clear();
-      }
     };
 
     const renderCalendar = () => {
@@ -934,75 +1075,9 @@
       }
     };
 
-    const renderAgendaMonthList = () => {
-      const monthStart = monthFloor(calendarCursor);
-      const nextMonthStart = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1);
-      const monthEnd = addDays(nextMonthStart, -1) || monthStart;
-      const startKey = toYmd(monthStart);
-      const endKey = toYmd(monthEnd);
-
-      if (agendaTitle) agendaTitle.textContent = prettyMonth(calendarCursor);
-      selectedLabel.textContent = `${prettyDay(startKey)} → ${prettyDay(endKey)}`;
-
-      const timelineItems = showTimelineItemsForView('month-list')
-        ? filteredItems()
-          .filter((item) => item.date >= startKey && item.date <= endKey)
-          .sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`))
-        : [];
-      const extraSections = resolveAgendaSections('month-list');
-
-      if (!timelineItems.length && !extraSections.length) {
-        renderAgendaEmpty('No tasks for this month.');
-        return;
-      }
-
-      while (agenda.firstChild) agenda.removeChild(agenda.firstChild);
-
-      let currentDateKey = '';
-      let group = null;
-      let groupBody = null;
-      timelineItems.forEach((item) => {
-        if (item.date !== currentDateKey) {
-          currentDateKey = item.date;
-          group = document.createElement('section');
-          group.className = 'planner-agenda-group';
-
-          const head = document.createElement('header');
-          head.className = 'planner-agenda-group__head';
-
-          const dateLabel = document.createElement('strong');
-          dateLabel.textContent = prettyDay(item.date);
-          head.appendChild(dateLabel);
-
-          const count = timelineItems.filter((entry) => entry.date === item.date).length;
-          const countLabel = document.createElement('span');
-          countLabel.className = 'text-muted small';
-          countLabel.textContent = `${count} item${count === 1 ? '' : 's'}`;
-          head.appendChild(countLabel);
-
-          groupBody = document.createElement('div');
-          groupBody.className = 'planner-agenda-group__items';
-          group.appendChild(head);
-          group.appendChild(groupBody);
-          agenda.appendChild(group);
-        }
-        if (groupBody) groupBody.appendChild(buildAgendaItem(item));
-      });
-
-      if (extraSections.length) {
-        appendAgendaSections(extraSections);
-      } else {
-        agendaSectionToggleIndex.clear();
-        agendaSectionItemIndex.clear();
-        agendaSectionActionIndex.clear();
-      }
-    };
-
     const renderAgenda = () => {
-      if (activeView === 'agenda') {
+      if (activeView === 'all') {
         renderAgendaList();
-      } else if (activeView === 'month-list') {
-        renderAgendaMonthList();
       } else {
         renderAgendaMonth();
       }
@@ -1027,6 +1102,30 @@
     }
 
     if (agenda) {
+      agenda.addEventListener('pointerdown', (event) => {
+        const target = event.target;
+        let toggle = target && typeof target.closest === 'function'
+          ? target.closest('[data-planner-toggle], [data-planner-section-toggle]')
+          : null;
+        if (!toggle && target && typeof target.closest === 'function') {
+          const row = target.closest('label.planner-item');
+          if (row) {
+            toggle = row.querySelector('[data-planner-toggle], [data-planner-section-toggle]');
+          }
+        }
+        if (!toggle) return;
+        const toggleId = String(
+          toggle.getAttribute('data-planner-section-toggle')
+          || toggle.getAttribute('data-planner-toggle')
+          || ''
+        ).trim();
+        if (!toggleId) return;
+        const x = Number(event.clientX);
+        const y = Number(event.clientY);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        togglePointerById.set(toggleId, { x, y });
+      });
+
       agenda.addEventListener('click', async (event) => {
         const sectionActionButton = event.target.closest('[data-planner-section-header-action]');
         if (sectionActionButton) {
@@ -1082,6 +1181,11 @@
           if (!entry || !entry.item) return;
           const nextDone = Boolean(toggle.checked);
           const previousDone = Boolean(entry.item.done);
+          const confirmed = await confirmDoneToggle(sectionKey, toggle, previousDone, nextDone);
+          if (!confirmed) {
+            toggle.checked = previousDone;
+            return;
+          }
 
           togglePendingById.add(sectionKey);
           entry.item.done = nextDone;
@@ -1116,6 +1220,11 @@
         }
         const nextDone = Boolean(toggle.checked);
         const previousDone = Boolean(item.done);
+        const confirmed = await confirmDoneToggle(itemId, toggle, previousDone, nextDone);
+        if (!confirmed) {
+          toggle.checked = previousDone;
+          return;
+        }
 
         togglePendingById.add(itemId);
         updateItemDoneState(itemId, nextDone);
@@ -1191,7 +1300,7 @@
         if (timeInput) timeInput.value = '';
         selectedDate = date;
         calendarCursor = monthFloor(date);
-        activeView = 'month';
+        activeView = 'tasks';
         render();
         titleInput.focus();
       });
@@ -1208,9 +1317,8 @@
     viewButtons.forEach((button) => {
       button.addEventListener('click', () => {
         const nextView = String(button.getAttribute('data-planner-view') || '').trim().toLowerCase();
-        if (nextView === 'agenda') activeView = 'agenda';
-        else if (nextView === 'month-list') activeView = 'month-list';
-        else activeView = 'month';
+        if (nextView === 'all' || nextView === 'month-list') activeView = 'all';
+        else activeView = 'tasks';
         render();
       });
     });
@@ -1228,7 +1336,7 @@
         calendarCursor = parseYmd(selectedDate) ? monthFloor(selectedDate) : monthFloor(new Date());
       }
       if (reloadOptions.resetView) {
-        activeView = 'month';
+        activeView = 'tasks';
         activeFilter = 'all';
       }
       render();

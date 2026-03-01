@@ -110,6 +110,7 @@ python manage.py migrate
 - Notes on resource details now render user avatars when available from social account metadata.
 - API keys list in resource details now fills available card height and scrolls internally.
 - Superuser Ask Alshival shell now resolves to per-user home directories under `USER_DATA_ROOT/<slug-username>-<user_id>/home`.
+- Ask Alshival shell mode is local-first by default. Set `WEB_TERMINAL_PREFER_HOST_SHELL=1` to prefer host shell mode.
 - Resource detail endpoints now support both user and team routes: `/u/<username>/resources/<uuid>/...` and `/team/<team_name>/resources/<uuid>/...`
 - Canonical route forwarding is implemented via `ResourceRouteAlias`.
 - Resource package ownership/moves are tracked by `ResourcePackageOwner` and `transfer_resource_package(...)`.

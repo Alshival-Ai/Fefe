@@ -88,6 +88,7 @@
           data-page-title="{{ page_item.title|escape }}"
           data-page-path="{{ page_item.path|escape }}"
           data-page-is-draft="{% if page_item.is_draft %}1{% else %}0{% endif %}"
+          data-page-nav-scope="{{ page_item.nav_scope|default:'account' }}"
           data-page-teams="{{ page_item.team_keys|join:'|' }}"
           data-page-team-names="{{ page_item.team_names|join:'|'|escape }}"
           data-page-resource-name="{{ page_item.resource_name|default:''|escape }}"
@@ -195,7 +196,6 @@
     </section>
   </div>
 </section>
-{{ member_teams|json_script:"wiki-member-teams" }}
 
 <script src="{% static 'js/marked.min.js' %}"></script>
 <script src="{% static 'js/purify.min.js' %}"></script>
@@ -229,36 +229,24 @@
     const sidebarStorageKey = 'alshival.wiki.sidebar-collapsed';
     const sidebarQuery = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 980px)') : null;
     const normalizeText = (value) => String(value || '').trim();
-    const slugify = (value) => {
-      return String(value || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-    };
-
-    let memberTeams = [];
-    try {
-      const node = document.getElementById('wiki-member-teams');
-      const parsed = JSON.parse(node ? node.textContent : '[]');
-      memberTeams = Array.isArray(parsed) ? parsed.map((item) => normalizeText(item)).filter(Boolean) : [];
-    } catch (error) {
-      memberTeams = [];
-    }
 
     const sourcePages = pageRows
       .map((row) => {
         const title = normalizeText(row.getAttribute('data-page-title'));
         const path = normalizeText(row.getAttribute('data-page-path'));
         const teamNames = parseList(row.getAttribute('data-page-team-names'));
-        const teamSlugs = parseList(row.getAttribute('data-page-teams'));
+        let navScope = normalizeText(row.getAttribute('data-page-nav-scope')).toLowerCase();
+        if (!['account', 'team', 'global'].includes(navScope)) {
+          navScope = 'account';
+        }
         return {
           href: normalizeText(row.getAttribute('href')) || '#',
           title: title || path || 'Untitled page',
           path,
           segments: path.split('/').filter(Boolean),
           isDraft: row.getAttribute('data-page-is-draft') === '1',
+          navScope,
           teamNames,
-          teamSlugs,
           isActive: row.classList.contains('is-active'),
         };
       })
@@ -414,28 +402,23 @@
     };
 
     const topLevelSections = () => {
-      const sections = [
+      return [
         {
-          key: 'all',
-          label: 'All Pages',
-          filter: (item) => Boolean(item),
+          key: 'account',
+          label: 'Account',
+          filter: (item) => item.navScope === 'account',
         },
         {
-          key: 'drafts',
-          label: 'Drafts',
-          filter: (item) => item.isDraft,
+          key: 'team',
+          label: 'Team',
+          filter: (item) => item.navScope === 'team',
+        },
+        {
+          key: 'global',
+          label: 'Global',
+          filter: (item) => item.navScope === 'global',
         },
       ];
-      memberTeams.forEach((teamName) => {
-        const slug = slugify(teamName);
-        if (!slug) return;
-        sections.push({
-          key: `team:${slug}`,
-          label: teamName,
-          filter: (item) => !item.isDraft && item.teamSlugs.includes(slug),
-        });
-      });
-      return sections;
     };
 
     const renderWikiTree = () => {
@@ -457,31 +440,23 @@
         return;
       }
 
-      const sections = topLevelSections();
-      const sectionBuckets = [];
-      const seenSectionSignatures = new Set();
-      sections.forEach((section) => {
-        const items = filteredPages.filter(section.filter);
-        if (!items.length) return;
-        const signature = items
-          .map((item) => item.path || item.href)
-          .sort((a, b) => a.localeCompare(b))
-          .join('|');
-        if (sectionBuckets.length > 0 && signature && seenSectionSignatures.has(signature)) {
-          return;
-        }
-        seenSectionSignatures.add(signature);
-        sectionBuckets.push({ section, items });
-      });
+      const sectionBuckets = topLevelSections().map((section) => ({
+        section,
+        items: filteredPages.filter(section.filter),
+      }));
       let firstVisibleLabel = '';
       let activeVisibleLabel = '';
+      let openedSection = false;
 
-      sectionBuckets.forEach(({ section, items }, index) => {
-        if (!firstVisibleLabel) firstVisibleLabel = section.label;
+      sectionBuckets.forEach(({ section, items }) => {
+        if (!firstVisibleLabel && items.length) firstVisibleLabel = section.label;
 
         const details = document.createElement('details');
         details.className = 'wiki-tree-node wiki-tree-node--top';
-        if (index === 0) details.open = true;
+        if (!openedSection && items.length) {
+          details.open = true;
+          openedSection = true;
+        }
 
         const summary = document.createElement('summary');
         summary.className = 'wiki-tree-node__summary';
@@ -498,13 +473,22 @@
 
         const children = document.createElement('div');
         children.className = 'wiki-tree-node__children';
-        const childTree = createTreeLevel(items, 0);
-        children.appendChild(childTree.fragment);
+        let childTree = { hasActive: false };
+        if (items.length) {
+          childTree = createTreeLevel(items, 0);
+          children.appendChild(childTree.fragment);
+        } else {
+          const empty = document.createElement('div');
+          empty.className = 'text-muted small';
+          empty.textContent = 'No pages in this scope.';
+          children.appendChild(empty);
+        }
         details.appendChild(children);
 
         if (childTree.hasActive) {
           details.open = true;
           activeVisibleLabel = section.label;
+          openedSection = true;
         }
 
         details.addEventListener('toggle', () => {

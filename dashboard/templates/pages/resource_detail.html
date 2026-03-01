@@ -378,6 +378,7 @@
     <article
       class="detail-card detail-card-full planner-panel resource-planner-panel"
       data-resource-planner
+      data-superuser="{% if request.user.is_superuser %}1{% else %}0{% endif %}"
       data-resource-planner-id="{{ resource.id }}"
       data-resource-uuid="{{ resource.resource_uuid }}"
       data-asana-complete-url-template="{% url 'update_asana_task_completion' task_gid='__TASK_GID__' %}"
@@ -387,6 +388,7 @@
       data-asana-comment-add-url-template="{% url 'add_asana_task_comment' task_gid='__TASK_GID__' %}"
       data-asana-board-map-url-template="{% url 'update_asana_board_resource_mapping' board_gid='__BOARD_GID__' %}"
       data-asana-task-map-url-template="{% url 'update_asana_task_resource_mapping' task_gid='__TASK_GID__' %}"
+      data-asana-workspace-members-url-template="{% url 'list_asana_workspace_members' workspace_gid='__WORKSPACE_GID__' %}"
       data-asana-completed-window-days="{{ asana_completed_window_days }}">
       <header class="planner-head">
         <div class="planner-title">
@@ -444,8 +446,8 @@
           </div>
           <strong class="planner-month-label" data-planner-month></strong>
           <div class="planner-view-switch" role="tablist" aria-label="Calendar view">
-            <button class="planner-view-btn is-active" type="button" data-planner-view="month">Month</button>
-            <button class="planner-view-btn" type="button" data-planner-view="agenda">Agenda</button>
+            <button class="planner-view-btn is-active" type="button" data-planner-view="tasks">Tasks</button>
+            <button class="planner-view-btn" type="button" data-planner-view="all">All</button>
           </div>
         </div>
       </div>
@@ -456,7 +458,7 @@
         </section>
         <section class="planner-agenda-shell">
           <div class="planner-agenda-head">
-            <h4 data-planner-agenda-title>Agenda</h4>
+            <h4 data-planner-agenda-title>Tasks</h4>
             <span class="text-muted small" data-planner-selected></span>
           </div>
           <div class="planner-agenda" data-planner-agenda></div>
@@ -763,8 +765,8 @@
 
 {% block page_js %}
 {{ block.super }}
-<script src="{% static 'js/planner-ui.js' %}"></script>
-<script src="{% static 'js/resource-planner.js' %}"></script>
+<script src="{% static 'js/planner-ui.js' %}?v=20260301a"></script>
+<script src="{% static 'js/resource-planner.js' %}?v=20260301a"></script>
 <script>
   (function () {
     const healthBtn = document.querySelector('[data-health-check-btn]');
@@ -1228,7 +1230,7 @@
       };
       const wsOrigin = resolveWsOrigin();
       if (!wsOrigin) {
-        term.write('\r\n[terminal session failed: origin unavailable]\r\n');
+        term.write('\\r\\n[terminal session failed: origin unavailable]\\r\\n');
         return;
       }
       const ws = new WebSocket(wsOrigin + wsPath);

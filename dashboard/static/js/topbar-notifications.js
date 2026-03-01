@@ -226,4 +226,10 @@
   });
 
   loadNotifications();
+  window.setInterval(() => {
+    if (document.hidden) {
+      return;
+    }
+    loadNotifications();
+  }, 30000);
 })();

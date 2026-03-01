@@ -79,6 +79,7 @@ The `./var` bind-mount preserves all runtime data (DB, user files, knowledge bas
 - Superuser shell sessions default to per-user home:
   - `<USER_DATA_ROOT>/<slug-username>-<user_id>/home`
 - Home is created automatically on first launch.
+- Shell mode is local-first by default; set `WEB_TERMINAL_PREFER_HOST_SHELL=1` to prefer host shell mode.
 - Static env-based identity override requires:
   - `WEB_TERMINAL_FORCE_STATIC_IDENTITY=1`
   - plus `WEB_TERMINAL_LOCAL_USERNAME` and `WEB_TERMINAL_LOCAL_HOME`

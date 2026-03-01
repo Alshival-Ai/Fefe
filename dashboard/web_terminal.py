@@ -1318,10 +1318,15 @@ async def _build_terminal_session(scope, user):
         if not bool(getattr(user, "is_staff", False)):
             raise PermissionError("Local shell access is restricted to staff.")
         openai_api_key = await _resolve_terminal_openai_api_key()
-        # Prefer host-account shells for staff users so sessions open in the
-        # provisioned per-user OS home (for example /home/<username>). Fall
-        # back to local shell mode when sudo/root user switching is unavailable.
-        if HostShellSession._can_switch_users():
+        # Local shell mode is the default for Ask Alshival shell sessions.
+        # Host shell mode remains available as an explicit opt-in.
+        prefer_host_shell = str(os.getenv("WEB_TERMINAL_PREFER_HOST_SHELL", "") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if prefer_host_shell and HostShellSession._can_switch_users():
             return HostShellSession(user, openai_api_key=openai_api_key)
         return LocalShellSession(user, openai_api_key=openai_api_key)
 

@@ -1,15 +1,23 @@
 import asyncio
+import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from dashboard.models import ResourceRouteAlias, ResourceTeamShare
 from dashboard.request_auth import user_can_access_resource
 from dashboard.resources_store import add_resource, get_resource
-from dashboard.web_terminal import _user_resource_ssh_config
+from dashboard.web_terminal import (
+    HostShellSession,
+    LocalShellSession,
+    _build_terminal_session,
+    _user_resource_ssh_config,
+)
 
 
 class WebTerminalAccessTests(TestCase):
@@ -108,3 +116,26 @@ class WebTerminalAccessTests(TestCase):
         self.assertEqual(ssh_config.host, "10.0.0.20")
         self.assertEqual(ssh_config.username, "ubuntu")
         Path(ssh_config.key_path).unlink(missing_ok=True)
+
+
+class WebTerminalShellModeSelectionTests(SimpleTestCase):
+    def _scope(self, query: str = "mode=shell") -> dict:
+        return {"query_string": query.encode("utf-8")}
+
+    def _staff_user(self):
+        return SimpleNamespace(is_staff=True, is_active=True, username="staff-user", pk=1)
+
+    def test_shell_mode_defaults_to_local_session(self):
+        with patch("dashboard.web_terminal._resolve_terminal_openai_api_key", new=AsyncMock(return_value="")), \
+             patch.object(HostShellSession, "_can_switch_users", return_value=True), \
+             patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("WEB_TERMINAL_PREFER_HOST_SHELL", None)
+            session = asyncio.run(_build_terminal_session(self._scope(), self._staff_user()))
+        self.assertIsInstance(session, LocalShellSession)
+
+    def test_shell_mode_uses_host_when_explicitly_enabled(self):
+        with patch("dashboard.web_terminal._resolve_terminal_openai_api_key", new=AsyncMock(return_value="")), \
+             patch.object(HostShellSession, "_can_switch_users", return_value=True), \
+             patch.dict(os.environ, {"WEB_TERMINAL_PREFER_HOST_SHELL": "1"}, clear=False):
+            session = asyncio.run(_build_terminal_session(self._scope(), self._staff_user()))
+        self.assertIsInstance(session, HostShellSession)

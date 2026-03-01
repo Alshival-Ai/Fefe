@@ -50,17 +50,29 @@
                 <span class="wiki-tree-node__label">Team</span>
               </summary>
               <div class="wiki-tree-node__children">
-                {% for item in resources %}
-                {% if item.access_scope == 'team' %}
-                <a class="wiki-tree-page" href="{{ item.detail_url }}">
-                  <span class="folder-icon" aria-hidden="true">PG</span>
-                  <span class="wiki-sidebar-page-copy">
-                    <strong>{{ item.name }}</strong>
-                    <small>{{ item.team_names|join:', '|default:'Team resource' }}</small>
-                  </span>
-                </a>
-                {% endif %}
+                {% for team in team_resources_nav %}
+                <details class="wiki-tree-node wiki-tree-node--folder" open>
+                  <summary class="wiki-tree-node__summary">
+                    <span class="folder-icon" aria-hidden="true">DIR</span>
+                    <span class="wiki-tree-node__label">{{ team.name }}</span>
+                    <span class="wiki-tree-node__count">{{ team.resources|length }}</span>
+                  </summary>
+                  <div class="wiki-tree-node__children">
+                    {% for item in team.resources %}
+                    <a class="wiki-tree-page" href="{{ item.detail_url }}">
+                      <span class="folder-icon" aria-hidden="true">PG</span>
+                      <span class="wiki-sidebar-page-copy">
+                        <strong>{{ item.name }}</strong>
+                        <small>{{ item.resource_type|title }}</small>
+                      </span>
+                    </a>
+                    {% endfor %}
+                  </div>
+                </details>
                 {% endfor %}
+                {% if not team_resources_nav %}
+                <div class="text-muted small">No team resources available.</div>
+                {% endif %}
               </div>
             </details>
 

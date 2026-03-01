@@ -111,6 +111,7 @@ docker compose up --build
 This starts:
 - `web`: Django + Uvicorn
 - `worker`: periodic resource health checker (every 5 minutes), using a pooled model of ~1 worker per 10 active users (capped)
+- `calendar-worker`: periodic Asana + Outlook cache sync (every 60 seconds)
 - `global-key-worker`: rotates global internal API keys
 - `user-key-worker`: rotates per-user internal account API keys (stored in each user's `member.db`)
 - `github-mcp`: uses the official `ghcr.io/github/github-mcp-server` image (avoids local source build issues)

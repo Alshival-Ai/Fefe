@@ -198,6 +198,7 @@ urlpatterns = [
     path('team/chat/alerts/settings/update/', views.update_team_chat_notification_settings, name='update_team_chat_notification_settings'),
     path('twilio/sms', views.twilio_sms_webhook, name='twilio_sms_webhook'),
     path('twilio/sms-group', views.twilio_sms_group_webhook, name='twilio_sms_group_webhook'),
+    path('chat/widget/', views.ask_alshival_widget_page, name='ask_alshival_widget_page'),
     path('chat/ask/', views.ask_alshival_chat, name='ask_alshival_chat'),
     path('chat/voice-token/', views.ask_alshival_voice_token, name='ask_alshival_voice_token'),
     path('chat/voice-log/', views.ask_alshival_voice_log, name='ask_alshival_voice_log'),

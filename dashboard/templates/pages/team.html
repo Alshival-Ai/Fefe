@@ -5,36 +5,6 @@
 
 {% block page_content %}
 <section class="team-hub-page">
-  <section class="table-wrap">
-    <div class="team-hub-head">
-      <div>
-        <h2>Teams Access</h2>
-        <p class="text-muted">Everything you can access through your team memberships.</p>
-      </div>
-    </div>
-    <div class="overview-kpis team-hub-kpis">
-      <article class="overview-kpi">
-        <span class="overview-kpi-label">Teams</span>
-        <strong class="overview-kpi-value">{{ team_membership_count }}</strong>
-        <span class="overview-kpi-meta">Active memberships</span>
-      </article>
-      <article class="overview-kpi">
-        <span class="overview-kpi-label">Resources</span>
-        <strong class="overview-kpi-value">{{ team_resource_count }}</strong>
-        <span class="overview-kpi-meta">Team-accessible</span>
-      </article>
-    </div>
-    {% if team_memberships %}
-    <div class="tag-row team-membership-tags">
-      {% for item in team_memberships %}
-      <span class="status info">{{ item.name }}</span>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="text-muted">You are not currently in any teams.</p>
-    {% endif %}
-  </section>
-
   {% if team_memberships %}
   <section
     class="{% if team_membership_count > 1 %}resources-layout team-page-shell{% else %}team-page-shell team-page-shell--single{% endif %}"
@@ -43,20 +13,20 @@
     <aside class="team-folder-panel team-folder-panel--chat-docked card team-page-nav wiki-sidebar" data-team-nav>
       <div class="wiki-sidebar-head">
         <div class="wiki-sidebar-head-copy">
-          <div class="team-folder-title">Team Folders</div>
-          <div class="team-folder-subtitle">Switch context across chat and resources.</div>
+          <div class="team-folder-title">Teams</div>
+          <div class="team-folder-subtitle">Browse by team and jump straight to team workspace.</div>
         </div>
       </div>
       <section class="wiki-sidebar-pages team-page-nav-pages">
         <div class="directory-users-toolbar wiki-sidebar-pages-head">
           <h3>Team Navigation</h3>
-          <span class="text-muted small">{{ team_membership_count }} folders</span>
+          <span class="text-muted small">{{ team_membership_count }} teams</span>
         </div>
         <div class="wiki-sidebar-tree team-folder-tree">
           <details class="wiki-tree-node wiki-tree-node--top wiki-tree-node--folder" open>
             <summary class="wiki-tree-node__summary">
               <span class="folder-icon" aria-hidden="true">DIR</span>
-              <span class="wiki-tree-node__label">All Teams</span>
+              <span class="wiki-tree-node__label">Teams</span>
               <span class="wiki-tree-node__count">{{ team_membership_count }}</span>
             </summary>
             <div class="wiki-tree-node__children">
@@ -155,8 +125,8 @@
               </div>
               <strong class="planner-month-label" data-planner-month></strong>
               <div class="planner-view-switch" role="tablist" aria-label="Calendar view">
-                <button class="planner-view-btn is-active" type="button" data-planner-view="month">Month</button>
-                <button class="planner-view-btn" type="button" data-planner-view="agenda">Agenda</button>
+                <button class="planner-view-btn is-active" type="button" data-planner-view="tasks">Tasks</button>
+                <button class="planner-view-btn" type="button" data-planner-view="all">All</button>
               </div>
             </div>
           </div>
@@ -167,7 +137,7 @@
             </section>
             <section class="planner-agenda-shell">
               <div class="planner-agenda-head">
-                <h4 data-planner-agenda-title>Agenda</h4>
+                <h4 data-planner-agenda-title>Tasks</h4>
                 <span class="text-muted small" data-planner-selected></span>
               </div>
               <div class="planner-agenda" data-planner-agenda></div>
@@ -225,6 +195,9 @@
       <section class="table-wrap" data-team-section="resources" id="team-resources-section">
         <div class="table-header">
           <h3>Team Resources</h3>
+          <div class="table-actions">
+            <button class="ghost-btn" type="button" data-team-add-resource-open>Add resource</button>
+          </div>
         </div>
         {% if team_resources %}
         <table>
@@ -271,6 +244,157 @@
         <p class="text-muted">No team resources are currently accessible.</p>
         {% endif %}
       </section>
+
+      <div class="modal" data-team-add-resource-modal aria-hidden="true">
+        <div class="modal-overlay" data-team-add-resource-close></div>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-label="Add resource">
+          <div class="modal-header">
+            <h3>Add resource</h3>
+            <button class="icon-btn" type="button" data-team-add-resource-close>✕</button>
+          </div>
+          <form method="post" action="{% url 'add_resource_item' %}" class="modal-form" data-team-add-resource-form enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path|escape }}">
+            <label>
+              <span>Name</span>
+              <input type="text" name="name" placeholder="Payments API" required />
+            </label>
+            <label>
+              <span>Resource type</span>
+              <select name="resource_type" required>
+                <option value="">Select type</option>
+                <option value="api">API Endpoint</option>
+                <option value="vm">Virtual Machine</option>
+                <option value="database">Database</option>
+                <option value="queue">Queue</option>
+                <option value="service">Service</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label data-team-add-resource-type-show="api" class="d-none">
+              <span>Health endpoint</span>
+              <input type="url" name="healthcheck_url" placeholder="https://api.company.com/health" />
+            </label>
+            <label data-team-add-resource-type-show="vm,database" class="d-none">
+              <span>Host or IP address</span>
+              <input type="text" name="address" placeholder="vm-prod-01 or 10.0.2.15" />
+            </label>
+            <label data-team-add-resource-type-show="database" class="d-none">
+              <span>Database type</span>
+              <select name="db_type">
+                <option value="">Select database</option>
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="mariadb">MariaDB</option>
+                <option value="mssql">SQL Server</option>
+                <option value="redis">Redis</option>
+                <option value="mongo">MongoDB</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label data-team-add-resource-type-show="database" class="d-none">
+              <span>Port</span>
+              <input type="number" name="port" min="1" max="65535" placeholder="5432" />
+            </label>
+            <label data-team-add-resource-type-show="service,queue,other" class="d-none">
+              <span>Target</span>
+              <input type="text" name="target" placeholder="service-name or URL" />
+            </label>
+            <div data-team-add-resource-type-show="vm" class="d-none ssh-group">
+              <div class="ssh-group-header">
+                <div>
+                  <div class="ssh-group-title">SSH credentials</div>
+                  <div class="text-muted small">Optional for VM resources</div>
+                </div>
+                <button class="ghost-btn" type="button" data-team-add-ssh-toggle="keys" aria-expanded="false">Add SSH credentials</button>
+              </div>
+              <div class="ssh-group-body d-none" data-team-add-ssh-panel="keys">
+                <label>
+                  <span>Credential source</span>
+                  <select name="ssh_mode">
+                    <option value="inline">Upload new key</option>
+                    <option value="saved">Use saved key</option>
+                  </select>
+                </label>
+                <label>
+                  <span>SSH username</span>
+                  <input type="text" name="ssh_username" placeholder="ubuntu" />
+                </label>
+                <label>
+                  <span>SSH port</span>
+                  <input type="number" name="ssh_port" min="1" max="65535" value="22" />
+                </label>
+                <div data-team-add-ssh-mode-show="saved" class="d-none">
+                  <label>
+                    <span>Saved key</span>
+                    <select name="ssh_credential_id">
+                      <option value="">Select saved key</option>
+                      {% for item in ssh_credential_choices %}
+                      <option value="{{ item.id_value }}" data-scope="{{ item.scope_level }}">
+                        {% if item.scope == 'team' %}
+                          Team{% if item.team_names %} ({{ item.team_names|join:', ' }}){% endif %}: {{ item.name }}
+                        {% elif item.scope == 'global_team' %}
+                          Global{% if item.team_names %} ({{ item.team_names|join:', ' }}){% endif %}: {{ item.name }}
+                        {% else %}
+                          Account: {{ item.name }}
+                        {% endif %}
+                      </option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <div class="text-muted small">Available keys from Account, Team, and Global libraries.</div>
+                </div>
+                <div data-team-add-ssh-mode-show="inline">
+                  <label>
+                    <span>Key level</span>
+                    <select name="ssh_scope">
+                      <option value="account">Account</option>
+                      <option value="team">Team</option>
+                      {% if request.user.is_superuser %}
+                      <option value="global">Global</option>
+                      {% endif %}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Teams</span>
+                    <select name="ssh_team_names" multiple size="5">
+                      {% for team_name in member_teams %}
+                      <option value="{{ team_name }}">{{ team_name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Key name</span>
+                    <input type="text" name="ssh_key_name" placeholder="prod-vm-key" />
+                  </label>
+                  <label>
+                    <span>Private key</span>
+                    <textarea name="ssh_key_text" rows="4" placeholder="Paste the private key"></textarea>
+                  </label>
+                  <label>
+                    <span>Private key file</span>
+                    <input type="file" name="ssh_key_file" />
+                  </label>
+                  <div class="text-muted small">Uploaded keys are saved to the selected key level and attached to this resource.</div>
+                </div>
+              </div>
+            </div>
+            <label data-team-add-resource-type-show="api,vm,database,queue,service,other" class="d-none">
+              <span>Notes</span>
+              <textarea name="notes" rows="3" placeholder="Optional context"></textarea>
+            </label>
+            <input type="hidden" name="resource_scope" value="team">
+            <input type="hidden" name="force_team_scope" value="1">
+            <input type="hidden" name="team_id" data-team-add-resource-team-id value="{{ team_memberships.0.id }}">
+            <input type="hidden" name="resource_team_names" data-team-add-resource-team-name value="{{ team_memberships.0.name|escape }}">
+            <p class="text-muted small">This resource will be shared with the active team automatically.</p>
+            <div class="modal-actions">
+              <button class="ghost-btn" type="button" data-team-add-resource-close>Cancel</button>
+              <button class="primary-btn" type="submit">Add resource</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <div class="modal resource-alert-modal" id="team-chat-alerts" data-team-chat-alert-modal aria-hidden="true">
         <div class="modal-overlay" data-team-chat-alert-close></div>
@@ -333,7 +457,7 @@
 
 {% block page_js %}
 {{ block.super }}
-<script src="{% static 'js/planner-ui.js' %}"></script>
+  <script src="{% static 'js/planner-ui.js' %}?v=20260301a"></script>
 <script>
   (function () {
     const pageShell = document.querySelector('[data-team-page]');
@@ -356,7 +480,6 @@
     const activeTeamLabels = Array.from(document.querySelectorAll('[data-team-active-label]'));
     const teamViewLabel = document.querySelector('[data-team-view-label]');
     const teamNavButtons = Array.from(document.querySelectorAll('[data-team-nav-btn]'));
-    const sectionNavButtons = Array.from(document.querySelectorAll('[data-team-section-link]'));
     const resourceRows = Array.from(document.querySelectorAll('[data-team-resource-row]'));
     const resourcesEmptyRow = document.querySelector('[data-team-resources-empty]');
     const alertOpenButton = chatShell.querySelector('[data-team-chat-alert-open]');
@@ -395,6 +518,15 @@
       const date = value instanceof Date ? value : new Date(value);
       if (Number.isNaN(date.getTime())) return '';
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    };
+
+    const addDaysYmd = (ymd, days) => {
+      const base = String(ymd || '').trim();
+      if (!base) return '';
+      const date = new Date(`${base}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return '';
+      date.setDate(date.getDate() + Number(days || 0));
+      return toYmd(date);
     };
 
     const prettyTime = (value) => {
@@ -480,11 +612,34 @@
       window.open(url, '_blank', 'noopener,noreferrer');
     };
     const openTeamAsanaAgendaSections = (context) => {
+      const rawView = String(context && context.view ? context.view : '').trim().toLowerCase();
+      const view = (rawView === 'all' || rawView === 'month-list') ? 'all' : 'tasks';
       const activeFilter = String(context && context.activeFilter ? context.activeFilter : 'all').trim().toLowerCase();
       if (activeFilter !== 'all') return [];
 
-      const asanaItems = activeTeamPlannerExternalItems().filter((item) => plannerItemSource(item) === 'asana');
-      if (!asanaItems.length) return [];
+      const asanaItemsAll = activeTeamPlannerExternalItems().filter((item) => plannerItemSource(item) === 'asana');
+      if (!asanaItemsAll.length) return [];
+      const todayKey = toYmd(new Date());
+      const selectedDateKey = String(context && context.selectedDate ? context.selectedDate : '').trim() || todayKey;
+      const tasksEndKey = addDaysYmd(selectedDateKey, 13) || selectedDateKey;
+      const allHistoryStartKey = addDaysYmd(todayKey, -29) || todayKey;
+      const completedDateKey = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+        return match ? match[1] : '';
+      };
+      const asanaItems = asanaItemsAll.filter((item) => {
+        const dueDate = String(item && item.date ? item.date : '').trim();
+        const done = Boolean(item && item.done);
+        if (view === 'all') {
+          if (!done) return true;
+          const completedAtKey = completedDateKey(item && item.completed_at ? item.completed_at : '');
+          return completedAtKey ? completedAtKey >= allHistoryStartKey : false;
+        }
+        if (!dueDate) return true;
+        return dueDate >= selectedDateKey && dueDate <= tasksEndKey;
+      });
 
       const boardBuckets = new Map();
       const ensureBoardBucket = (board) => {
@@ -506,6 +661,24 @@
         }
         return boardBuckets.get(sectionId);
       };
+
+      asanaItemsAll.forEach((item) => {
+        const projectLinks = Array.isArray(item && item.project_links) ? item.project_links : [];
+        if (!projectLinks.length) {
+          ensureBoardBucket({ name: 'Unassigned' });
+          return;
+        }
+        projectLinks.forEach((project) => {
+          const boardGid = String(project && project.gid ? project.gid : '').trim();
+          const boardName = String(project && project.name ? project.name : '').trim();
+          const boardUrl = String(project && project.url ? project.url : '').trim();
+          ensureBoardBucket({
+            gid: boardGid,
+            name: boardName || 'Unassigned',
+            url: boardUrl,
+          });
+        });
+      });
 
       asanaItems.forEach((item) => {
         const taskId = String(item && item.task_gid ? item.task_gid : '').trim() || String(item && item.id ? item.id : '').trim();
@@ -669,8 +842,11 @@
         },
         readOnly: true,
         monthEmptyText: 'No mapped team tasks for this day.',
-        listEmptyText: 'No mapped team tasks scheduled in this range.',
-        listWindowDays: 21,
+        listEmptyText: 'No mapped team tasks in the last 30 days or upcoming.',
+        listHistoryDays: 30,
+        showListTimelineItems: (context) => String(context && context.activeFilter ? context.activeFilter : 'all')
+          .trim()
+          .toLowerCase() !== 'all',
       });
     };
 
@@ -903,17 +1079,6 @@
       });
     });
 
-    sectionNavButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        const section = String(button.getAttribute('data-team-section-link') || '').trim();
-        if (!section) return;
-        sectionNavButtons.forEach((node) => node.classList.toggle('is-active', node === button));
-        const target = document.querySelector(`[data-team-section="${section}"]`);
-        if (!target) return;
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    });
-
     input.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
       const hasText = Boolean(String(input.value || '').trim());
@@ -986,6 +1151,201 @@
     const initialTeamId = getPersistentTeam();
     setActiveTeam(initialTeamId, { reload: false });
     reloadForTeam();
+  })();
+</script>
+<script>
+  (function () {
+    const openButton = document.querySelector('[data-team-add-resource-open]');
+    const modal = document.querySelector('[data-team-add-resource-modal]');
+    const form = document.querySelector('[data-team-add-resource-form]');
+    if (!openButton || !modal || !form) return;
+
+    const closeButtons = Array.from(modal.querySelectorAll('[data-team-add-resource-close]'));
+    const teamSelect = document.querySelector('[data-team-chat-team]');
+    const typeSelect = form.querySelector('select[name="resource_type"]');
+    const teamIdInput = form.querySelector('[data-team-add-resource-team-id]');
+    const teamNameInput = form.querySelector('[data-team-add-resource-team-name]');
+    const sshToggle = form.querySelector('[data-team-add-ssh-toggle="keys"]');
+    const sshPanel = form.querySelector('[data-team-add-ssh-panel="keys"]');
+    const sshModeSelect = form.querySelector('select[name="ssh_mode"]');
+    const sshScopeSelect = form.querySelector('select[name="ssh_scope"]');
+    const sshTeamSelect = form.querySelector('select[name="ssh_team_names"]');
+    const sshCredentialSelect = form.querySelector('select[name="ssh_credential_id"]');
+    const sshUsernameInput = form.querySelector('input[name="ssh_username"]');
+    const sshKeyTextInput = form.querySelector('textarea[name="ssh_key_text"]');
+    const sshKeyFileInput = form.querySelector('input[name="ssh_key_file"]');
+    const sshPortInput = form.querySelector('input[name="ssh_port"]');
+
+    const showModal = () => {
+      modal.classList.add('is-active');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('modal-open');
+    };
+
+    const hideModal = () => {
+      modal.classList.remove('is-active');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('modal-open');
+    };
+
+    const updateTypeVisibility = () => {
+      const type = String(typeSelect && typeSelect.value ? typeSelect.value : '').trim();
+      form.querySelectorAll('[data-team-add-resource-type-show]').forEach((section) => {
+        const showFor = String(section.getAttribute('data-team-add-resource-type-show') || '')
+          .split(',')
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+        section.classList.toggle('d-none', showFor.length > 0 && !showFor.includes(type));
+      });
+    };
+
+    const syncTeamScopeInputs = () => {
+      if (!teamSelect) return;
+      const option = teamSelect.options[teamSelect.selectedIndex];
+      const teamId = String(option && option.value ? option.value : '').trim();
+      const teamName = String(
+        option && (option.getAttribute('data-team-name') || option.textContent)
+          ? (option.getAttribute('data-team-name') || option.textContent)
+          : ''
+      ).trim();
+      if (teamIdInput) teamIdInput.value = teamId;
+      if (teamNameInput) teamNameInput.value = teamName;
+    };
+
+    const updateSshModeVisibility = () => {
+      const mode = String(sshModeSelect && sshModeSelect.value ? sshModeSelect.value : 'inline').trim();
+      form.querySelectorAll('[data-team-add-ssh-mode-show]').forEach((section) => {
+        const showFor = String(section.getAttribute('data-team-add-ssh-mode-show') || '')
+          .split(',')
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+        section.classList.toggle('d-none', showFor.length > 0 && !showFor.includes(mode));
+      });
+      if (sshCredentialSelect) {
+        sshCredentialSelect.disabled = sshCredentialSelect.options.length <= 1;
+      }
+    };
+
+    const resetSshPanel = () => {
+      if (sshPanel) sshPanel.classList.add('d-none');
+      if (sshToggle) {
+        sshToggle.textContent = 'Add SSH credentials';
+        sshToggle.setAttribute('aria-expanded', 'false');
+      }
+    };
+
+    const toggleSshPanel = () => {
+      if (!sshPanel || !sshToggle) return;
+      const isOpen = !sshPanel.classList.contains('d-none');
+      sshPanel.classList.toggle('d-none', isOpen);
+      sshToggle.textContent = isOpen ? 'Add SSH credentials' : 'Hide SSH credentials';
+      sshToggle.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+    };
+
+    const getSshUsernameError = () => {
+      if (!sshUsernameInput) return null;
+      const container = sshUsernameInput.parentElement;
+      if (!container) return null;
+      let error = container.querySelector('[data-team-add-ssh-username-error]');
+      if (!error) {
+        error = document.createElement('div');
+        error.className = 'text-danger small';
+        error.setAttribute('data-team-add-ssh-username-error', 'true');
+        sshUsernameInput.insertAdjacentElement('afterend', error);
+      }
+      return error;
+    };
+
+    const setSshUsernameError = (message) => {
+      const error = getSshUsernameError();
+      if (!error) return;
+      error.textContent = String(message || '');
+    };
+
+    const resetForm = () => {
+      form.reset();
+      if (typeSelect) typeSelect.value = '';
+      if (sshModeSelect) sshModeSelect.value = 'inline';
+      if (sshScopeSelect) sshScopeSelect.value = 'account';
+      if (sshPortInput) sshPortInput.value = '22';
+      if (sshTeamSelect) {
+        Array.from(sshTeamSelect.options).forEach((option) => {
+          option.selected = false;
+        });
+      }
+      if (sshCredentialSelect) sshCredentialSelect.value = '';
+      setSshUsernameError('');
+      resetSshPanel();
+      updateTypeVisibility();
+      updateSshModeVisibility();
+      syncTeamScopeInputs();
+    };
+
+    openButton.addEventListener('click', () => {
+      resetForm();
+      showModal();
+    });
+
+    closeButtons.forEach((button) => {
+      button.addEventListener('click', hideModal);
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      if (!modal.classList.contains('is-active')) return;
+      hideModal();
+    });
+
+    if (typeSelect) {
+      typeSelect.addEventListener('change', updateTypeVisibility);
+    }
+    if (sshModeSelect) {
+      sshModeSelect.addEventListener('change', updateSshModeVisibility);
+    }
+    if (sshToggle) {
+      sshToggle.addEventListener('click', (event) => {
+        event.preventDefault();
+        toggleSshPanel();
+      });
+    }
+    if (sshUsernameInput) {
+      sshUsernameInput.addEventListener('input', () => {
+        if (String(sshUsernameInput.value || '').trim()) {
+          setSshUsernameError('');
+        }
+      });
+    }
+
+    form.addEventListener('submit', (event) => {
+      syncTeamScopeInputs();
+      if (!teamIdInput || !String(teamIdInput.value || '').trim()) {
+        event.preventDefault();
+        return;
+      }
+
+      const sshMode = String(sshModeSelect && sshModeSelect.value ? sshModeSelect.value : 'inline').trim();
+      const sshUsername = String(sshUsernameInput && sshUsernameInput.value ? sshUsernameInput.value : '').trim();
+      const hasSavedKey = sshMode === 'saved' && sshCredentialSelect && String(sshCredentialSelect.value || '').trim();
+      const keyText = String(sshKeyTextInput && sshKeyTextInput.value ? sshKeyTextInput.value : '').trim();
+      const hasFile = Boolean(sshKeyFileInput && sshKeyFileInput.files && sshKeyFileInput.files.length > 0);
+      const requiresUsername = Boolean(hasSavedKey || (sshMode === 'inline' && (keyText || hasFile)));
+
+      if (requiresUsername && !sshUsername) {
+        event.preventDefault();
+        setSshUsernameError('SSH username is required when attaching a key.');
+        if (sshPanel && sshPanel.classList.contains('d-none')) {
+          toggleSshPanel();
+        }
+        if (sshUsernameInput) sshUsernameInput.focus();
+      } else {
+        setSshUsernameError('');
+      }
+    });
+
+    updateTypeVisibility();
+    updateSshModeVisibility();
+    syncTeamScopeInputs();
+    resetSshPanel();
   })();
 </script>
 {% endblock page_js %}
